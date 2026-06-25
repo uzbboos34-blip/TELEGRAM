@@ -1,0 +1,48 @@
+{
+  "name": "ross-messenger",
+  "version": "1.0.0",
+  "description": "Ross Messenger - Telegram clone for staying connected",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "export": "next build && next export",
+    "cap:sync": "npx cap sync",
+    "cap:android": "npx cap open android",
+    "build:apk": "npm run build && npx cap sync android"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "^18",
+    "react-dom": "^18",
+    "telegram": "^2.22.2",
+    "big-integer": "^1.6.51",
+    "socket.io-client": "^4.7.5",
+    "socket.io": "^4.7.5",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/haptics": "^6.0.0",
+    "@capacitor/keyboard": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0",
+    "input-otp": "^1.2.4",
+    "framer-motion": "^11.3.8",
+    "zustand": "^4.5.4",
+    "date-fns": "^3.6.0",
+    "react-virtualized-auto-sizer": "^1.0.24",
+    "react-window": "^1.8.10",
+    "emoji-picker-react": "^4.9.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/react-window": "^1.8.8",
+    "typescript": "^5",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.5"
+  }
+}
