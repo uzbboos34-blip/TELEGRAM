@@ -154,7 +154,7 @@ export default function ChatPage() {
         <div className="chat-header-info">
           <div className="chat-header-name">{chatName}</div>
           <div className={`chat-header-status ${isOnline ? '' : 'offline'}`}>
-            {isOnline ? 'online' : peerType === 'group' ? 'guruh' : peerType === 'channel' ? 'kanal' : 'oxirgi marta ko\'rilgan'}
+            {isOnline ? 'online' : peerType === 'group' ? 'guruh' : peerType === 'channel' ? 'kanal' : 'oxirgi marta ko&apos;rilgan'}
           </div>
         </div>
 

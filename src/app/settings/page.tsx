@@ -45,7 +45,7 @@ export default function SettingsPage() {
           </div>
           <div>
             <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 600, color: 'var(--text-primary)' }}>
-              {user ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Noma\'lum'}
+              {user ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Noma&apos;lum'}
             </div>
             {user?.username && (
               <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--accent)' }}>
@@ -92,7 +92,7 @@ export default function SettingsPage() {
             </div>
             <div className="settings-item-content">
               <div className="settings-item-title">Ko'rinish</div>
-              <div className="settings-item-subtitle">{theme === 'dark' ? 'Qorang\'i rejim' : 'Yorug\' rejim'}</div>
+              <div className="settings-item-subtitle">{theme === 'dark' ? 'Qorang&apos;i rejim' : 'Yorug&apos; rejim'}</div>
             </div>
             <div style={{
               width: 48, height: 28, borderRadius: 14,
@@ -113,7 +113,7 @@ export default function SettingsPage() {
             </div>
             <div className="settings-item-content">
               <div className="settings-item-title">Til</div>
-              <div className="settings-item-subtitle">O'zbek tili</div>
+              <div className="settings-item-subtitle">O&apos;zbek tili</div>
             </div>
             <ArrowRightIcon />
           </div>

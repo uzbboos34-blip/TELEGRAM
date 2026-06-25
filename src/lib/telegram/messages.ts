@@ -1,10 +1,8 @@
 /**
- * Telegram Messages
- * Xabarlarni yuborish va olish
+ * Telegram Messages — Dynamic imports, gramjs compatible BigInteger
  */
 
 import { getTelegramClient } from './client';
-import { Api } from 'telegram';
 
 export interface Message {
   id: number;
@@ -15,62 +13,28 @@ export interface Message {
   isRead: boolean;
   replyToMsgId?: number;
   media?: MessageMedia;
-  reactions?: MessageReaction[];
   forwarded?: boolean;
   editDate?: number;
 }
 
 export interface MessageMedia {
-  type: 'photo' | 'video' | 'audio' | 'document' | 'sticker' | 'gif';
-  fileId?: string;
+  type: 'photo' | 'video' | 'audio' | 'document' | 'sticker';
   mimeType?: string;
   fileName?: string;
   fileSize?: number;
-  width?: number;
-  height?: number;
-  duration?: number;
-  thumbnail?: string;
 }
 
-export interface MessageReaction {
-  emoji: string;
-  count: number;
-  isOwn: boolean;
-}
+async function makeInputPeer(peerId: string, peerType: 'user' | 'group' | 'channel') {
+  const { Api } = await import('telegram');
+  const bigInt = (await import('big-integer')).default;
 
-function parseMessage(msg: Api.Message): Message {
-  let media: MessageMedia | undefined;
-
-  if (msg.media) {
-    if (msg.media instanceof Api.MessageMediaPhoto) {
-      media = { type: 'photo' };
-    } else if (msg.media instanceof Api.MessageMediaDocument) {
-      const doc = msg.media.document;
-      if (doc instanceof Api.Document) {
-        const mimeType = doc.mimeType;
-        if (mimeType.startsWith('video/')) {
-          media = { type: 'video', mimeType, fileSize: Number(doc.size) };
-        } else if (mimeType.startsWith('audio/')) {
-          media = { type: 'audio', mimeType, fileSize: Number(doc.size) };
-        } else {
-          media = { type: 'document', mimeType, fileSize: Number(doc.size) };
-        }
-      }
-    }
+  if (peerType === 'user') {
+    return new Api.InputPeerUser({ userId: bigInt(peerId), accessHash: bigInt(0) });
+  } else if (peerType === 'group') {
+    return new Api.InputPeerChat({ chatId: bigInt(peerId) });
+  } else {
+    return new Api.InputPeerChannel({ channelId: bigInt(peerId), accessHash: bigInt(0) });
   }
-
-  return {
-    id: msg.id,
-    text: msg.message || '',
-    date: msg.date,
-    fromId: msg.fromId?.toString(),
-    isOutgoing: msg.out || false,
-    isRead: !msg.unread,
-    replyToMsgId: msg.replyTo?.replyToMsgId,
-    media,
-    forwarded: !!msg.fwdFrom,
-    editDate: msg.editDate,
-  };
 }
 
 export async function getMessages(
@@ -81,15 +45,10 @@ export async function getMessages(
 ): Promise<Message[]> {
   try {
     const client = await getTelegramClient();
+    const { Api } = await import('telegram');
+    const bigInt = (await import('big-integer')).default;
 
-    let inputPeer: Api.TypeInputPeer;
-    if (peerType === 'user') {
-      inputPeer = new Api.InputPeerUser({ userId: BigInt(peerId), accessHash: BigInt(0) });
-    } else if (peerType === 'group') {
-      inputPeer = new Api.InputPeerChat({ chatId: BigInt(peerId) });
-    } else {
-      inputPeer = new Api.InputPeerChannel({ channelId: BigInt(peerId), accessHash: BigInt(0) });
-    }
+    const inputPeer = await makeInputPeer(peerId, peerType);
 
     const result = await client.invoke(
       new Api.messages.GetHistory({
@@ -100,14 +59,45 @@ export async function getMessages(
         limit,
         maxId: 0,
         minId: 0,
-        hash: BigInt(0),
+        hash: bigInt(0),
       })
     );
 
-    if (result instanceof Api.messages.Messages || result instanceof Api.messages.MessagesSlice || result instanceof Api.messages.ChannelMessages) {
+    if (
+      result instanceof Api.messages.Messages ||
+      result instanceof Api.messages.MessagesSlice ||
+      result instanceof Api.messages.ChannelMessages
+    ) {
       return result.messages
-        .filter((m): m is Api.Message => m instanceof Api.Message)
-        .map(parseMessage)
+        .filter((m): m is InstanceType<typeof Api.Message> => m instanceof Api.Message)
+        .map((msg) => {
+          let media: MessageMedia | undefined;
+
+          if (msg.media instanceof Api.MessageMediaPhoto) {
+            media = { type: 'photo' };
+          } else if (msg.media instanceof Api.MessageMediaDocument) {
+            const doc = msg.media.document;
+            if (doc instanceof Api.Document) {
+              const mime = doc.mimeType;
+              if (mime.startsWith('video/')) media = { type: 'video', mimeType: mime };
+              else if (mime.startsWith('audio/')) media = { type: 'audio', mimeType: mime };
+              else media = { type: 'document', mimeType: mime };
+            }
+          }
+
+          return {
+            id: msg.id,
+            text: msg.message || '',
+            date: msg.date,
+            fromId: (msg as any).fromId?.toString(),
+            isOutgoing: msg.out || false,
+            isRead: !(msg as any).unread,
+            replyToMsgId: (msg as any).replyTo?.replyToMsgId,
+            media,
+            forwarded: !!(msg as any).fwdFrom,
+            editDate: (msg as any).editDate,
+          } as Message;
+        })
         .reverse();
     }
 
@@ -123,36 +113,29 @@ export async function sendMessage(
   peerType: 'user' | 'group' | 'channel',
   text: string,
   replyToMsgId?: number
-): Promise<Message | null> {
+): Promise<void> {
   try {
     const client = await getTelegramClient();
+    const { Api } = await import('telegram');
+    const bigInt = (await import('big-integer')).default;
 
-    let inputPeer: Api.TypeInputPeer;
-    if (peerType === 'user') {
-      inputPeer = new Api.InputPeerUser({ userId: BigInt(peerId), accessHash: BigInt(0) });
-    } else if (peerType === 'group') {
-      inputPeer = new Api.InputPeerChat({ chatId: BigInt(peerId) });
-    } else {
-      inputPeer = new Api.InputPeerChannel({ channelId: BigInt(peerId), accessHash: BigInt(0) });
-    }
+    const inputPeer = await makeInputPeer(peerId, peerType);
+    const randomId = bigInt(Math.floor(Math.random() * 1e15));
 
-    const result = await client.invoke(
+    await client.invoke(
       new Api.messages.SendMessage({
         peer: inputPeer,
         message: text,
-        randomId: BigInt(Math.floor(Math.random() * 1e15)),
+        randomId,
         replyTo: replyToMsgId
           ? new Api.InputReplyToMessage({ replyToMsgId })
           : undefined,
         noWebpage: true,
       })
     );
-
-    console.log('[Messages] sent:', result);
-    return null;
   } catch (error) {
     console.error('[Messages] sendMessage error:', error);
-    return null;
+    throw error;
   }
 }
 
@@ -163,53 +146,11 @@ export async function markAsRead(
 ): Promise<void> {
   try {
     const client = await getTelegramClient();
+    const { Api } = await import('telegram');
 
-    let inputPeer: Api.TypeInputPeer;
-    if (peerType === 'user') {
-      inputPeer = new Api.InputPeerUser({ userId: BigInt(peerId), accessHash: BigInt(0) });
-    } else if (peerType === 'group') {
-      inputPeer = new Api.InputPeerChat({ chatId: BigInt(peerId) });
-    } else {
-      inputPeer = new Api.InputPeerChannel({ channelId: BigInt(peerId), accessHash: BigInt(0) });
-    }
-
-    await client.invoke(
-      new Api.messages.ReadHistory({
-        peer: inputPeer,
-        maxId,
-      })
-    );
-  } catch (error) {
-    console.error('[Messages] markAsRead error:', error);
-  }
-}
-
-export async function deleteMessages(
-  peerId: string,
-  peerType: 'user' | 'group' | 'channel',
-  messageIds: number[],
-  forEveryone = false
-): Promise<void> {
-  try {
-    const client = await getTelegramClient();
-
-    if (peerType === 'channel') {
-      const inputChannel = new Api.InputChannel({ channelId: BigInt(peerId), accessHash: BigInt(0) });
-      await client.invoke(
-        new Api.channels.DeleteMessages({
-          channel: inputChannel,
-          id: messageIds,
-        })
-      );
-    } else {
-      await client.invoke(
-        new Api.messages.DeleteMessages({
-          id: messageIds,
-          revoke: forEveryone,
-        })
-      );
-    }
-  } catch (error) {
-    console.error('[Messages] deleteMessages error:', error);
+    const inputPeer = await makeInputPeer(peerId, peerType);
+    await client.invoke(new Api.messages.ReadHistory({ peer: inputPeer, maxId }));
+  } catch (e) {
+    console.error('[Messages] markAsRead error:', e);
   }
 }

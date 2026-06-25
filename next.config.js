@@ -1,29 +1,37 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
+  // Static export faqat standalone rejimda
+  // Capacitor uchun alohida build script ishlatamiz
   trailingSlash: true,
   images: {
     unoptimized: true,
-    remotePatterns: [
-      { protocol: 'https', hostname: '*.telegram.org' },
-      { protocol: 'https', hostname: 'cdn*.telegram.org' },
-      { protocol: 'https', hostname: 'tg-proxy.moxirbekmoxirbek29.workers.dev' },
-    ],
   },
-  async headers() {
-    return [
-      {
-        source: '/api/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET,POST,PUT,DELETE,OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
-        ],
-      },
-    ];
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        net: false,
+        tls: false,
+        dns: false,
+        child_process: false,
+        'node:fs': false,
+        'node:net': false,
+        'node:tls': false,
+        'node:dns': false,
+        'node:crypto': false,
+        'node:stream': false,
+        'node:buffer': false,
+        'node:path': false,
+        'node:util': false,
+        'node:events': false,
+        'node:os': false,
+      };
+    }
+    return config;
   },
   experimental: {
-    serverComponentsExternalPackages: ['telegram'],
+    serverComponentsExternalPackages: ['telegram', 'node-localstorage'],
   },
 };
 

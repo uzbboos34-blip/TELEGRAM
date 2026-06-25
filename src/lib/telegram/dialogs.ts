@@ -1,9 +1,8 @@
 /**
- * Telegram Dialogs (Chatlar ro'yxati)
+ * Telegram Dialogs — big-integer compatible
  */
 
 import { getTelegramClient } from './client';
-import { Api } from 'telegram';
 
 export interface Dialog {
   id: string;
@@ -14,9 +13,7 @@ export interface Dialog {
   isGroup: boolean;
   isChannel: boolean;
   isBot: boolean;
-  photo?: string;
   online?: boolean;
-  lastSeen?: number;
   isPinned: boolean;
   isMuted: boolean;
   type: 'user' | 'group' | 'channel' | 'bot';
@@ -25,82 +22,69 @@ export interface Dialog {
 export async function getDialogs(limit = 50): Promise<Dialog[]> {
   try {
     const client = await getTelegramClient();
+    const { Api } = await import('telegram');
+    const bigInt = (await import('big-integer')).default;
 
     const result = await client.invoke(
       new Api.messages.GetDialogs({
         offsetDate: 0,
         offsetId: 0,
         offsetPeer: new Api.InputPeerEmpty(),
-        limit: limit,
-        hash: BigInt(0),
+        limit,
+        hash: bigInt(0),
       })
     );
 
     const dialogs: Dialog[] = [];
 
-    if (result instanceof Api.messages.Dialogs || result instanceof Api.messages.DialogsSlice) {
+    if (
+      result instanceof Api.messages.Dialogs ||
+      result instanceof Api.messages.DialogsSlice
+    ) {
       const { dialogs: rawDialogs, messages, users, chats } = result;
 
-      const usersMap = new Map<string, Api.User>();
-      const chatsMap = new Map<string, Api.Chat | Api.Channel>();
+      const usersMap = new Map();
+      const chatsMap = new Map();
 
-      for (const user of users) {
-        if (user instanceof Api.User) {
-          usersMap.set(user.id.toString(), user);
-        }
+      for (const u of users) {
+        if (u instanceof Api.User) usersMap.set(u.id.toString(), u);
       }
-      for (const chat of chats) {
-        if (chat instanceof Api.Chat || chat instanceof Api.Channel) {
-          chatsMap.set(chat.id.toString(), chat);
+      for (const c of chats) {
+        if (c instanceof Api.Chat || c instanceof Api.Channel) {
+          chatsMap.set(c.id.toString(), c);
         }
       }
 
       for (const dialog of rawDialogs) {
         if (!(dialog instanceof Api.Dialog)) continue;
-
         const peer = dialog.peer;
-        let dialogInfo: Dialog | null = null;
+        let info: Dialog | null = null;
 
-        const lastMsg = messages.find((m) => {
-          if (!(m instanceof Api.Message)) return false;
-          if (peer instanceof Api.PeerUser) {
-            return (
-              (m.fromId instanceof Api.PeerUser &&
-                m.fromId.userId.toString() === peer.userId.toString()) ||
-              m.peerId instanceof Api.PeerUser
-            );
-          }
-          if (peer instanceof Api.PeerChat) {
-            return m.peerId instanceof Api.PeerChat;
-          }
-          return false;
-        }) as Api.Message | undefined;
+        const lastMsg = messages.find((m) => m instanceof Api.Message) as InstanceType<typeof Api.Message> | undefined;
 
         if (peer instanceof Api.PeerUser) {
-          const user = usersMap.get(peer.userId.toString());
-          if (!user) continue;
-
-          dialogInfo = {
+          const u = usersMap.get(peer.userId.toString());
+          if (!u) continue;
+          info = {
             id: peer.userId.toString(),
-            name: [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Unknown',
+            name: [u.firstName, u.lastName].filter(Boolean).join(' ') || 'Unknown',
             lastMessage: lastMsg?.message || '',
             lastMessageDate: lastMsg?.date,
             unreadCount: dialog.unreadCount,
             isGroup: false,
             isChannel: false,
-            isBot: user.bot || false,
-            online: user.status instanceof Api.UserStatusOnline,
+            isBot: u.bot || false,
+            online: u.status instanceof Api.UserStatusOnline,
             isPinned: dialog.pinned || false,
             isMuted: false,
-            type: user.bot ? 'bot' : 'user',
+            type: u.bot ? 'bot' : 'user',
           };
         } else if (peer instanceof Api.PeerChat) {
-          const chat = chatsMap.get(peer.chatId.toString()) as Api.Chat | undefined;
-          if (!chat) continue;
-
-          dialogInfo = {
+          const c = chatsMap.get(peer.chatId.toString());
+          if (!c) continue;
+          info = {
             id: peer.chatId.toString(),
-            name: chat.title || 'Group',
+            name: c.title || 'Guruh',
             lastMessage: lastMsg?.message || '',
             lastMessageDate: lastMsg?.date,
             unreadCount: dialog.unreadCount,
@@ -112,51 +96,30 @@ export async function getDialogs(limit = 50): Promise<Dialog[]> {
             type: 'group',
           };
         } else if (peer instanceof Api.PeerChannel) {
-          const channel = chatsMap.get(peer.channelId.toString()) as Api.Channel | undefined;
-          if (!channel) continue;
-
-          dialogInfo = {
+          const ch = chatsMap.get(peer.channelId.toString());
+          if (!ch) continue;
+          info = {
             id: peer.channelId.toString(),
-            name: channel.title || 'Channel',
+            name: ch.title || 'Kanal',
             lastMessage: lastMsg?.message || '',
             lastMessageDate: lastMsg?.date,
             unreadCount: dialog.unreadCount,
-            isGroup: !channel.broadcast,
-            isChannel: channel.broadcast || false,
+            isGroup: !ch.broadcast,
+            isChannel: ch.broadcast || false,
             isBot: false,
             isPinned: dialog.pinned || false,
             isMuted: false,
-            type: channel.broadcast ? 'channel' : 'group',
+            type: ch.broadcast ? 'channel' : 'group',
           };
         }
 
-        if (dialogInfo) {
-          dialogs.push(dialogInfo);
-        }
+        if (info) dialogs.push(info);
       }
     }
 
     return dialogs;
   } catch (error) {
     console.error('[Dialogs] getDialogs error:', error);
-    return [];
-  }
-}
-
-export async function searchDialogs(query: string): Promise<Dialog[]> {
-  try {
-    const client = await getTelegramClient();
-    const result = await client.invoke(
-      new Api.contacts.Search({
-        q: query,
-        limit: 20,
-      })
-    );
-
-    // Search result parsing
-    return [];
-  } catch (error) {
-    console.error('[Dialogs] searchDialogs error:', error);
     return [];
   }
 }
