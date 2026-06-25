@@ -1,23 +1,25 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || 'http://10.0.2.2:3000';
+
 const config: CapacitorConfig = {
   appId: 'com.ross.messenger',
   appName: 'Ross Messenger',
-  // Development: Next.js server URL ishlatish
-  // Production: server.url ni o'chirish va webDir ishlatish
-  webDir: '.next/static',
+  // www/index.html - Capacitor uchun kerakli entry point
+  webDir: 'www',
   server: {
-    // Development rejimida Next.js server'ga ulanish
-    url: process.env.NODE_ENV === 'development'
-      ? 'http://localhost:3000'
-      : undefined,
+    // Next.js server URL - APK shu URLga ulanadi
+    // Production da o'z serveringiz URLini qo'ying
+    url: SERVER_URL,
     androidScheme: 'https',
     cleartext: true,
     allowNavigation: [
       'tg-proxy.moxirbekmoxirbek29.workers.dev',
       '*.telegram.org',
       'cdn*.telegram.org',
+      '10.0.2.2',
       'localhost',
+      '127.0.0.1',
     ],
   },
   android: {

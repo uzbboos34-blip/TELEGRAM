@@ -1,14 +1,20 @@
-name: 🤖 Build Android APK
+name: 🤖 Build Android APK — Ross Messenger
 
 on:
   push:
     branches: [main, master]
   workflow_dispatch:
     inputs:
+      server_url:
+        description: 'Next.js Server URL (APK shuga ulanadi)'
+        required: false
+        default: 'https://your-nextjs-server.vercel.app'
       build_type:
-        description: 'Build type (debug/release)'
+        description: 'Build turi'
         required: false
         default: 'debug'
+        type: choice
+        options: [debug, release]
 
 env:
   NODE_VERSION: '20'
@@ -21,28 +27,34 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: 📥 Checkout code
+      # ── 1. Checkout ──────────────────────────────────────
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: 🟢 Setup Node.js ${{ env.NODE_VERSION }}
+      # ── 2. Node.js ───────────────────────────────────────
+      - name: 🟢 Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
-      - name: ☕ Setup Java JDK ${{ env.JAVA_VERSION }}
+      # ── 3. Java ──────────────────────────────────────────
+      - name: ☕ Setup Java JDK
         uses: actions/setup-java@v4
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
 
+      # ── 4. Android SDK ───────────────────────────────────
       - name: 🔧 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 📦 Install Dependencies
+      # ── 5. Install deps ──────────────────────────────────
+      - name: 📦 Install npm dependencies
         run: npm ci
 
-      - name: 🏗️ Build Next.js App
+      # ── 6. Next.js build ─────────────────────────────────
+      - name: 🏗️ Build Next.js
         run: npm run build
         env:
           NEXT_PUBLIC_TG_APP_ID: ${{ secrets.TG_APP_ID }}
@@ -51,17 +63,25 @@ jobs:
           NEXT_PUBLIC_APP_NAME: Ross_messenger
           NODE_OPTIONS: '--max-old-space-size=4096'
 
-      - name: 🔄 Update Capacitor Config for Production
+      # ── 7. Capacitor JSON config ──────────────────────────
+      - name: ⚙️ Write capacitor.config.json (production)
         run: |
-          # Production build - server URL'ni o'chirish
-          cat > capacitor.config.json << 'EOF'
+          SERVER_URL="${{ github.event.inputs.server_url || secrets.NEXT_SERVER_URL || 'https://ross-messenger.vercel.app' }}"
+          echo "Using server URL: $SERVER_URL"
+          cat > capacitor.config.json << EOF
           {
             "appId": "com.ross.messenger",
             "appName": "Ross Messenger",
-            "webDir": ".next",
+            "webDir": "www",
             "server": {
+              "url": "$SERVER_URL",
               "androidScheme": "https",
-              "cleartext": true
+              "cleartext": true,
+              "allowNavigation": [
+                "tg-proxy.moxirbekmoxirbek29.workers.dev",
+                "*.telegram.org",
+                "cdn*.telegram.org"
+              ]
             },
             "android": {
               "allowMixedContent": true,
@@ -81,35 +101,54 @@ jobs:
           }
           EOF
 
-      - name: 🔄 Initialize Capacitor Android
-        run: |
-          npx cap add android || true
-          npx cap sync android
-        env:
-          NODE_OPTIONS: '--max-old-space-size=4096'
+      # ── 8. Add Android platform ───────────────────────────
+      - name: 📱 Add Capacitor Android platform
+        run: npx cap add android || echo "Android platform already exists"
 
-      - name: 📱 Grant Gradle Execute Permissions
+      # ── 9. Sync Capacitor ─────────────────────────────────
+      - name: 🔄 Sync Capacitor
+        run: npx cap sync android
+        env:
+          NODE_OPTIONS: '--max-old-space-size=2048'
+
+      # ── 10. Gradle permissions ────────────────────────────
+      - name: 🔑 Grant Gradle permissions
         run: chmod +x android/gradlew
 
+      # ── 11. Build APK (debug) ─────────────────────────────
       - name: 🔨 Build Debug APK
         if: ${{ github.event.inputs.build_type != 'release' }}
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            -Dfile.encoding=UTF-8
         env:
           GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx3g -Dorg.gradle.daemon=false'
 
+      # ── 11b. Build APK (release) ──────────────────────────
       - name: 🚀 Build Release APK
         if: ${{ github.event.inputs.build_type == 'release' }}
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        run: |
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --stacktrace \
+            -Dfile.encoding=UTF-8
         env:
           GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx3g -Dorg.gradle.daemon=false'
 
+      # ── 12. List APK files ────────────────────────────────
       - name: 🔍 Find APK files
-        run: find android/app/build/outputs -name "*.apk" | head -10
+        if: always()
+        run: |
+          echo "=== APK files found ==="
+          find android/app/build/outputs -name "*.apk" 2>/dev/null || echo "No APK files found yet"
 
+      # ── 13. Upload Debug APK ──────────────────────────────
       - name: 📤 Upload Debug APK
-        if: ${{ github.event.inputs.build_type != 'release' }}
+        if: ${{ github.event.inputs.build_type != 'release' && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: ross-messenger-debug-v${{ github.run_number }}
@@ -117,8 +156,9 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # ── 14. Upload Release APK ────────────────────────────
       - name: 📤 Upload Release APK
-        if: ${{ github.event.inputs.build_type == 'release' }}
+        if: ${{ github.event.inputs.build_type == 'release' && success() }}
         uses: actions/upload-artifact@v4
         with:
           name: ross-messenger-release-v${{ github.run_number }}
@@ -126,16 +166,22 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
+      # ── 15. Summary ───────────────────────────────────────
       - name: 📊 Build Summary
         if: always()
         run: |
-          echo "## 📱 Ross Messenger APK Build" >> $GITHUB_STEP_SUMMARY
+          STATUS="${{ job.status }}"
+          ICON="✅"
+          [ "$STATUS" != "success" ] && ICON="❌"
+          
+          echo "## $ICON APK Build — Ross Messenger" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Status** | $STATUS |" >> $GITHUB_STEP_SUMMARY
           echo "| **Build #** | ${{ github.run_number }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Branch** | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| **Type** | ${{ github.event.inputs.build_type || 'debug' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **App ID** | com.ross.messenger |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> 📥 APK ni yuklash uchun yuqoridagi **Artifacts** bo'limiga o'ting" >> $GITHUB_STEP_SUMMARY
+          echo "> 📥 APK ni **Artifacts** bo'limidan yuklab oling ⬆️" >> $GITHUB_STEP_SUMMARY

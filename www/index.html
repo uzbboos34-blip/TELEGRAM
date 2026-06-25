@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#17212B" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Ross Messenger</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; background: #17212B; }
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+      color: #fff;
+      gap: 20px;
+    }
+    .logo svg { width: 90px; height: 90px; animation: pulse 1.5s ease-in-out infinite alternate; }
+    @keyframes pulse {
+      from { transform: scale(1); opacity: 0.9; }
+      to   { transform: scale(1.06); opacity: 1; }
+    }
+    h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; }
+    .dots { display: flex; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #2AABEE; animation: bounce 1.2s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: .2s; }
+    .dot:nth-child(3) { animation-delay: .4s; }
+    @keyframes bounce {
+      0%,60%,100% { transform: translateY(0); opacity: .4; }
+      30%          { transform: translateY(-8px); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">
+    <svg viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="120" cy="120" r="120" fill="url(#g)"/>
+      <path d="M81.229 128.772l14.237 39.406s1.78 3.687 3.686 3.687c1.907 0 30.255-29.492 30.255-29.492l31.525-60.89L81.229 128.772z" fill="#C8DAEA"/>
+      <path d="M100.106 138.878l-2.733 29.046s-1.144 8.9 7.754 0 17.415-15.763 17.415-15.763" fill="#A9C9DD"/>
+      <path d="M81.486 130.178l-40.32-13.195s-4.83-1.956-3.284-6.396c.32-.915 1.985-1.742 5.513-3.922 16.964-10.454 139.151-52.555 139.151-52.555s4.441-1.49 7.07-.501c1.284.495 2.11 1.504 2.362 3.405.231 1.695.345 3.272.034 5.546-.025.179-35.442 104.637-35.442 104.637s-2.059 5.106-7.471 5.296c-2.016.069-4.471-.416-7.452-2.876-7.544-6.254-33.829-24.171-39.624-28.126a1.043 1.043 0 0 1-.447-.797c-.073-.523.504-1.17.504-1.17s45.729-40.603 46.981-45.109c.094-.33-.261-.492-.739-.349-3.012.903-55.233 34.115-61.084 37.842a3.09 3.09 0 0 1-1.752.27z" fill="white"/>
+      <defs>
+        <linearGradient id="g" x1="120" y1="0" x2="120" y2="240" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#2AABEE"/><stop offset="1" stop-color="#229ED9"/>
+        </linearGradient>
+      </defs>
+    </svg>
+  </div>
+  <h1>Ross Messenger</h1>
+  <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+</body>
+</html>
