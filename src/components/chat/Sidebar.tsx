@@ -33,6 +33,7 @@ function formatTime(ts?: number) {
 // ── TelegramAvatar — profil rasimini yuklaydigan avatar ────
 function TelegramAvatar({ dialog, size = 54 }: { dialog: Dialog; size?: number }) {
   const [photoUrl, setPhotoUrl] = useState<string|null>(null);
+  const [photoErr, setPhotoErr] = useState(false);
   const grad = getGrad(dialog.id);
 
   useEffect(() => {
@@ -44,12 +45,16 @@ function TelegramAvatar({ dialog, size = 54 }: { dialog: Dialog; size?: number }
     }
   }, [dialog.id, dialog.isGroup, dialog.isChannel, dialog.isBot]);
 
+  const showPhoto = photoUrl && !photoErr;
+
   return (
     <div className={`dialog-avatar ${grad}`}
       style={{width:size, height:size, position:'relative', overflow:'hidden', flexShrink:0}}>
-      {photoUrl ? (
+      {showPhoto ? (
         <img src={photoUrl} alt={dialog.name}
-          style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}/>
+          style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
+          onError={() => setPhotoErr(true)}
+        />
       ) : dialog.isChannel ? (
         <span style={{fontSize:22}}>📢</span>
       ) : dialog.isGroup ? (

@@ -61,27 +61,97 @@ export async function downloadMessagePhoto(
   }
 }
 
-// ── Profil fotosuratini yuklash ────────────────────────────
+// ── Profil fotosuratini yuklash ──────────────────────────
 export async function downloadProfilePhoto(peerId: string): Promise<string | null> {
-  if (profileCache.has(peerId)) return profileCache.get(peerId)!;
+  if (profileCache.has(peerId)) {
+    const cached = profileCache.get(peerId)!;
+    return cached || null; // '' means no photo
+  }
 
   try {
     const client = await getTelegramClient();
     const inputEntity = getCachedEntity(peerId);
     if (!inputEntity) return null;
 
-    const data = await (client as any).downloadProfilePhoto(inputEntity, { isBig: false });
-    if (!data?.length) return null;
+    const raw = await (client as any).downloadProfilePhoto(inputEntity, { isBig: false });
 
-    const url = URL.createObjectURL(new Blob([data], { type: 'image/jpeg' }));
+    // Buffer validatsiya
+    if (!raw) { profileCache.set(peerId, ''); return null; }
+
+    // Uint8Array ga aylantirish
+    let bytes: Uint8Array;
+    if (raw instanceof Uint8Array) {
+      bytes = raw;
+    } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(raw)) {
+      bytes = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+    } else if (raw instanceof ArrayBuffer) {
+      bytes = new Uint8Array(raw);
+    } else {
+      profileCache.set(peerId, ''); return null;
+    }
+
+    // Minimal hajm tekshirish (bo'sh yoki buzilgan)
+    if (bytes.length < 16) { profileCache.set(peerId, ''); return null; }
+
+    // Magic bytes dan MIME aniqlash
+    let mime = 'image/jpeg';
+    if (bytes[0] === 0xFF && bytes[1] === 0xD8)                     mime = 'image/jpeg';
+    else if (bytes[0] === 0x89 && bytes[1] === 0x50)                mime = 'image/png';
+    else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) mime = 'image/webp';
+    else if (bytes[0] === 0x47 && bytes[1] === 0x49)                mime = 'image/gif';
+
+    const blob = new Blob([bytes], { type: mime });
+    if (blob.size < 16) { profileCache.set(peerId, ''); return null; }
+
+    const url = URL.createObjectURL(blob);
     profileCache.set(peerId, url);
     return url;
   } catch (e: any) {
-    if (!String(e).includes('no profile photo')) {
+    if (!String(e).includes('no photo') && !String(e).includes('cancelled')) {
       console.warn('[Media] Profile photo error:', peerId, e?.message ?? e);
     }
+    profileCache.set(peerId, '');
     return null;
   }
+}
+
+// ── Ovozli xabar yuborish ─────────────────────────────
+export async function sendVoiceMessage(
+  peerId: string,
+  peerType: string,
+  audioBlob: Blob,
+  durationSec: number,
+): Promise<void> {
+  const { getTelegramClient } = await import('./client');
+  const { getCachedEntity, cachePeer } = await import('./peer-cache');
+  const { Api } = await import('telegram');
+
+  const client = await getTelegramClient();
+  let inputEntity = getCachedEntity(peerId);
+
+  if (!inputEntity) {
+    // Fallback: getInputEntity
+    try { inputEntity = await (client as any).getInputEntity(peerId); }
+    catch { throw new Error('Peer topilmadi'); }
+  }
+
+  // ArrayBuffer→File
+  const buffer = await audioBlob.arrayBuffer();
+  const file   = new File([buffer], 'voice.ogg', { type: audioBlob.type || 'audio/ogg' });
+
+  await (client as any).sendFile(inputEntity, {
+    file,
+    voiceNote: true,
+    attributes: [
+      new Api.DocumentAttributeAudio({
+        voice: true,
+        duration: Math.round(durationSec),
+        title:  undefined,
+        performer: undefined,
+        waveform: undefined,
+      }),
+    ],
+  });
 }
 
 // ── Keshni tozalash ────────────────────────────────────────

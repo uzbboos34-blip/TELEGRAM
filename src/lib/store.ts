@@ -14,6 +14,14 @@ interface ActiveCall {
   status: 'calling' | 'ringing' | 'active' | 'ended';
 }
 
+export interface IncomingCall {
+  callId: string;
+  peerId: string;
+  peerName: string;
+  isVideo: boolean;
+  signal: unknown; // CallSignal from webrtc/call-manager
+}
+
 interface AppState {
   // Auth
   user: UserInfo | null;
@@ -49,6 +57,8 @@ interface AppState {
   // Call
   activeCall: ActiveCall | null;
   setActiveCall: (call: ActiveCall | null) => void;
+  incomingCall: IncomingCall | null;
+  setIncomingCall: (call: IncomingCall | null) => void;
 
   // Connection
   isConnected: boolean;
@@ -108,6 +118,8 @@ export const useAppStore = create<AppState>((set) => ({
   // Call
   activeCall: null,
   setActiveCall: (activeCall) => set({ activeCall }),
+  incomingCall: null,
+  setIncomingCall: (incomingCall) => set({ incomingCall }),
 
   // Connection
   isConnected: false,
