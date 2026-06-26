@@ -255,9 +255,10 @@ class WebRTCCallManager {
 
   // ── Signal xabarini parse qilish ─────────────────────
   static parseSignal(text: string): CallSignal | null {
-    if (!text.startsWith(CALL_PREFIX)) return null;
+    const prefix = text.startsWith(CALL_PREFIX) ? CALL_PREFIX : (text.startsWith('📞 RC:') ? '📞 RC:' : null);
+    if (!prefix) return null;
     try {
-      return JSON.parse(text.slice(CALL_PREFIX.length));
+      return JSON.parse(text.slice(prefix.length));
     } catch {
       return null;
     }

@@ -139,8 +139,8 @@ export async function sendVoiceMessage(
   }
 
   const arrayBuffer = await audioBlob.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const file = new CustomFile('voice.ogg', buffer.length, '', buffer);
+  const buffer = new Uint8Array(arrayBuffer);
+  const file = new CustomFile('voice.ogg', buffer.length, '', buffer as any);
 
   await (client as any).sendFile(inputEntity, {
     file,
@@ -173,8 +173,8 @@ export async function sendFileMessage(
   const inputEntity = await resolveInputEntity(client, peerId, peerType);
   if (!inputEntity) throw new Error('Peer topilmadi');
 
-  const buffer = Buffer.from(fileBuffer);
-  const file = new CustomFile(fileName, buffer.length, '', buffer);
+  const buffer = new Uint8Array(fileBuffer);
+  const file = new CustomFile(fileName, buffer.length, '', buffer as any);
 
   await (client as any).sendFile(inputEntity, {
     file,

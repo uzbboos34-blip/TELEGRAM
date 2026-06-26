@@ -166,7 +166,7 @@ export async function getMessages(
       offsetId: offsetId || undefined,
     });
 
-    const messages = rawMessages.filter((m: any) => m.className === 'Message' && !(m.message && m.message.startsWith('📞RC:')));
+    const messages = rawMessages.filter((m: any) => m.className === 'Message' && !(m.message && (m.message.startsWith('📞RC:') || m.message.startsWith('📞 RC:'))));
 
     // Store raw messages for media download
     for (const msg of messages) {

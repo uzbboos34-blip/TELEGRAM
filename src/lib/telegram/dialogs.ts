@@ -76,7 +76,7 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
         let lastMessage = '';
         if (d.message) {
           if (d.message.message) {
-            if (d.message.message.startsWith('📞RC:')) {
+            if (d.message.message.startsWith('📞RC:') || d.message.message.startsWith('📞 RC:')) {
               lastMessage = '📞 Qo\'ng\'iroq';
             } else {
               lastMessage = d.message.message;

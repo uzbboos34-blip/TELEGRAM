@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated } from '@/lib/telegram/auth';
+import { isAuthenticated, getCurrentUser } from '@/lib/telegram/auth';
 import { useAppStore } from '@/lib/store';
 import Sidebar from '@/components/chat/Sidebar';
 import CallScreen from '@/components/call/CallScreen';
@@ -57,8 +57,11 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
               if (!targetChatId) return;
 
               // a. Agar xabar Call signal bo'lsa
-              if (parsed.text.startsWith(CALL_PREFIX)) {
-                if (parsed.isOutgoing) return; // O'zim yuborgan call signal
+              const isSignal = parsed.text.startsWith(CALL_PREFIX) || parsed.text.startsWith('📞 RC:');
+              if (isSignal) {
+                const currentUser = getCurrentUser();
+                const isOutgoing = parsed.isOutgoing || (currentUser?.id && parsed.fromId === currentUser.id);
+                if (isOutgoing) return; // O'zim yuborgan call signal
 
                 const signal = CallSignal_parse(parsed.text);
                 if (!signal) return;
@@ -199,8 +202,9 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
 
 // ── Helper ─────────────────────────────────────────────────
 function CallSignal_parse(text: string): CallSignal | null {
-  if (!text.startsWith(CALL_PREFIX)) return null;
-  try { return JSON.parse(text.slice(CALL_PREFIX.length)); }
+  const prefix = text.startsWith(CALL_PREFIX) ? CALL_PREFIX : (text.startsWith('📞 RC:') ? '📞 RC:' : null);
+  if (!prefix) return null;
+  try { return JSON.parse(text.slice(prefix.length)); }
   catch { return null; }
 }
 
