@@ -100,7 +100,7 @@ export async function downloadProfilePhoto(peerId: string): Promise<string | nul
     else if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[8] === 0x57) mime = 'image/webp';
     else if (bytes[0] === 0x47 && bytes[1] === 0x49)                mime = 'image/gif';
 
-    const blob = new Blob([bytes], { type: mime });
+    const blob = new Blob([bytes as any], { type: mime });
     if (blob.size < 16) { profileCache.set(peerId, ''); return null; }
 
     const url = URL.createObjectURL(blob);

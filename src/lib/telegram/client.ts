@@ -14,6 +14,8 @@ export interface TgClient {
   disconnect(): Promise<void>;
   invoke(request: unknown): Promise<unknown>;
   session: TgSession;
+  addEventHandler(handler: (event: any) => void | Promise<void>, event: any): void;
+  removeEventHandler(handler: (event: any) => void | Promise<void>, event: any): void;
 }
 
 let _client: TgClient | null = null;

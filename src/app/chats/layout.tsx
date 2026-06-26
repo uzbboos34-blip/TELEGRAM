@@ -79,9 +79,8 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
 
               if (signal.type === 'answer') {
                 // Update active call status to active
-                setActiveCall(prev =>
-                  prev ? { ...prev, status: 'active' } : null
-                );
+                const current = useAppStore.getState().activeCall;
+                if (current) setActiveCall({ ...current, status: 'active' });
               }
             } else if (signal.type === 'end' || signal.type === 'reject') {
               await callManager.handleSignal(signal);
