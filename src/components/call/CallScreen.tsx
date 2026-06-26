@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/lib/store';
 
-// ── Avatarlar uchun ────────────────────────────────────────
-const GRADS = ['avatar-gradient-1','avatar-gradient-2','avatar-gradient-3','avatar-gradient-4','avatar-gradient-5'];
-function getGrad(id: string) {
+// ── Avatarlar ──────────────────────────────────────────────
+const GRADS = [
+  '#2AABEE','#E91E63','#9C27B0','#4CAF50',
+  '#FF9800','#00BCD4','#F44336','#3F51B5',
+];
+function getColor(id: string) {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = ((h << 5) - h) + id.charCodeAt(i);
   return GRADS[Math.abs(h) % GRADS.length];
@@ -14,54 +17,70 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
 }
 
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────
 export default function CallScreen() {
   const { activeCall, setActiveCall } = useAppStore();
-  const [status, setStatus]       = useState<'calling'|'ringing'|'active'|'ended'>('calling');
+  const [status, setStatus]       = useState<'calling' | 'active' | 'ended'>('calling');
   const [duration, setDuration]   = useState(0);
   const [muted, setMuted]         = useState(false);
   const [speakerOn, setSpeaker]   = useState(true);
   const [camOff, setCamOff]       = useState(false);
+  const [localCam, setLocalCam]   = useState(false);
 
-  const localVideoRef  = useRef<HTMLVideoElement>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const timerRef       = useRef<NodeJS.Timeout | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const localStream   = useRef<MediaStream | null>(null);
+  const timerRef      = useRef<NodeJS.Timeout | null>(null);
+  const connectRef    = useRef<NodeJS.Timeout | null>(null);
 
   const isVideo = activeCall?.type === 'video';
 
-  // ── Start call / get media ─────────────────────────────
+  // ── Init call ─────────────────────────────────────────
   useEffect(() => {
     if (!activeCall) return;
     setStatus('calling');
     setDuration(0);
+    setMuted(false);
+    setCamOff(false);
+    setLocalCam(false);
 
-    // Simulatsiya: 2 soniyadan keyin ulanish
-    const connectTimer = setTimeout(() => {
+    // Auto-simulate connect after 3s (real P2P call needs Telegram MTProto)
+    connectRef.current = setTimeout(async () => {
       setStatus('active');
       startTimer();
-      if (isVideo) startLocalCamera();
-    }, 2000);
+
+      // Request camera/mic for video call
+      if (isVideo) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true, audio: true,
+          });
+          localStream.current = stream;
+          if (localVideoRef.current) {
+            localVideoRef.current.srcObject = stream;
+          }
+          setLocalCam(true);
+        } catch (e) {
+          console.warn('[Call] Media access denied:', e);
+          // Voice only as fallback
+          try {
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            localStream.current = audioStream;
+          } catch { /* no mic */ }
+        }
+      } else {
+        // Voice call — get mic
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          localStream.current = stream;
+        } catch { /* no mic */ }
+      }
+    }, 2500);
 
     return () => {
-      clearTimeout(connectTimer);
+      if (connectRef.current) clearTimeout(connectRef.current);
       stopAll();
     };
   }, [activeCall?.peerId]); // eslint-disable-line
-
-  async function startLocalCamera() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true, audio: true,
-      });
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
-    } catch (e) {
-      console.warn('[Call] Kamera ruxsati berilmadi:', e);
-    }
-  }
 
   function startTimer() {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -70,26 +89,22 @@ export default function CallScreen() {
 
   function stopAll() {
     if (timerRef.current) clearInterval(timerRef.current);
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
-    localStreamRef.current = null;
-  }
-
-  function formatDuration(sec: number) {
-    const m = Math.floor(sec / 60).toString().padStart(2, '0');
-    const s = (sec % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+    if (connectRef.current) clearTimeout(connectRef.current);
+    localStream.current?.getTracks().forEach(t => t.stop());
+    localStream.current = null;
+    setLocalCam(false);
   }
 
   function endCall() {
     setStatus('ended');
     stopAll();
-    setTimeout(() => setActiveCall(null), 500);
+    setTimeout(() => setActiveCall(null), 800);
   }
 
   function toggleMute() {
     setMuted(m => {
       const next = !m;
-      localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !next; });
+      localStream.current?.getAudioTracks().forEach(t => { t.enabled = !next; });
       return next;
     });
   }
@@ -97,151 +112,198 @@ export default function CallScreen() {
   function toggleCam() {
     setCamOff(c => {
       const next = !c;
-      localStreamRef.current?.getVideoTracks().forEach(t => { t.enabled = !next; });
+      localStream.current?.getVideoTracks().forEach(t => { t.enabled = !next; });
       return next;
     });
   }
 
+  function fmtDuration(s: number) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+  }
+
   if (!activeCall) return null;
 
-  const grad = getGrad(activeCall.peerId);
-  const ini  = initials(activeCall.peerName);
+  const color   = getColor(activeCall.peerId);
+  const ini     = initials(activeCall.peerName);
+  const bgColor = isVideo ? '#000' : '#17212B';
 
-  const statusText =
+  const statusLabel =
     status === 'calling' ? 'Ulanilmoqda...' :
-    status === 'ringing' ? 'Jiringlayapti...' :
-    status === 'active'  ? formatDuration(duration) :
+    status === 'active'  ? fmtDuration(duration) :
     'Tugadi';
 
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
-      background: isVideo ? '#000' : 'linear-gradient(160deg, #1a2c3d 0%, #0d1b2a 60%, #17212B 100%)',
       display: 'flex', flexDirection: 'column',
-      alignItems: 'center', justifyContent: 'space-between',
-      padding: 'env(safe-area-inset-top, 40px) 0 env(safe-area-inset-bottom, 40px)',
+      background: bgColor,
     }}>
+      {/* ── Background gradient ─────────────────── */}
+      <div style={{
+        position: 'absolute', inset: 0, pointerEvents: 'none',
+        background: isVideo
+          ? 'none'
+          : `radial-gradient(circle at 50% 30%, ${color}22 0%, transparent 70%)`,
+      }}/>
 
-      {/* Remote video background */}
-      {isVideo && (
-        <video ref={remoteVideoRef} autoPlay playsInline
-          style={{
-            position: 'absolute', inset: 0, width: '100%', height: '100%',
-            objectFit: 'cover', opacity: status === 'active' ? 1 : 0,
-            transition: 'opacity .5s',
-          }}
-        />
-      )}
-
-      {/* Overlay gradient for video calls */}
-      {isVideo && (
+      {/* ── Status bar ──────────────────────────── */}
+      <div style={{
+        position: 'relative', zIndex: 2,
+        padding: '52px 24px 16px',
+        textAlign: 'center',
+      }}>
         <div style={{
-          position: 'absolute', inset: 0,
-          background: 'linear-gradient(to bottom, rgba(0,0,0,.6) 0%, transparent 35%, transparent 65%, rgba(0,0,0,.7) 100%)',
-          pointerEvents: 'none',
-        }} />
-      )}
-
-      {/* ── Top: Name + Status ─────────────────── */}
-      <div style={{ textAlign: 'center', paddingTop: 20, position: 'relative', zIndex: 10 }}>
-        <div style={{ fontSize: 13, color: 'rgba(255,255,255,.7)', letterSpacing: 1, marginBottom: 8 }}>
-          {isVideo ? '📹 VIDEO QO\'NG\'IROQ' : '📞 OVOZLI QO\'NG\'IROQ'}
+          fontSize: 12, letterSpacing: 1.5,
+          color: 'rgba(255,255,255,.55)',
+          textTransform: 'uppercase', marginBottom: 6,
+        }}>
+          {isVideo ? '📹 Video qo\'ng\'iroq' : '📞 Ovozli qo\'ng\'iroq'}
         </div>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', marginBottom: 8 }}>
+        <h1 style={{
+          fontSize: 26, fontWeight: 700, color: '#fff',
+          margin: '0 0 6px',
+        }}>
           {activeCall.peerName}
         </h1>
         <div style={{
-          fontSize: 16, color: status === 'active' ? '#4CAF50' : 'rgba(255,255,255,.65)',
+          fontSize: 15,
+          color: status === 'active' ? '#4CAF50' : 'rgba(255,255,255,.6)',
           transition: 'color .4s',
+          minHeight: 22,
         }}>
-          {statusText}
+          {status === 'active' && (
+            <span style={{
+              display: 'inline-block',
+              width: 8, height: 8, borderRadius: '50%',
+              background: '#4CAF50', marginRight: 6,
+              boxShadow: '0 0 8px #4CAF50',
+              animation: 'callPulse 2s infinite',
+              verticalAlign: 'middle',
+            }}/>
+          )}
+          {statusLabel}
         </div>
       </div>
 
-      {/* ── Center: Avatar (voice) or Local Video ─ */}
-      <div style={{ position: 'relative', zIndex: 10 }}>
-        {isVideo ? (
-          <div style={{ position: 'relative' }}>
-            <video ref={localVideoRef} autoPlay muted playsInline
-              style={{
-                width: 120, height: 160, objectFit: 'cover',
-                borderRadius: 16, border: '2px solid rgba(255,255,255,.2)',
-                background: '#111',
-                display: camOff ? 'none' : 'block',
-              }}
-            />
-            {camOff && (
-              <div style={{
-                width: 120, height: 160, borderRadius: 16,
-                background: 'rgba(255,255,255,.1)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 40,
-              }}>
-                🚫
+      {/* ── Center content ──────────────────────── */}
+      <div style={{
+        flex: 1, display: 'flex', alignItems: 'center',
+        justifyContent: 'center', position: 'relative',
+      }}>
+        {/* Remote video placeholder (future use) */}
+        {isVideo && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: '#111',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {/* Remote user avatar when no video */}
+            <div style={{
+              width: 100, height: 100, borderRadius: '50%',
+              background: color, display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: 36, fontWeight: 700,
+              color: '#fff',
+              animation: status === 'calling' ? 'callRing 1.5s ease-in-out infinite' : 'none',
+              boxShadow: status === 'calling' ? `0 0 0 0 ${color}` : 'none',
+            }}>
+              {ini}
+            </div>
+          </div>
+        )}
+
+        {/* Voice call — big avatar */}
+        {!isVideo && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+          }}>
+            <div style={{
+              width: 120, height: 120, borderRadius: '50%',
+              background: color,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 44, fontWeight: 700, color: '#fff',
+              boxShadow: status === 'calling'
+                ? `0 0 0 0 ${color}44`
+                : status === 'active'
+                ? `0 0 20px ${color}66`
+                : 'none',
+              animation: status === 'calling' ? 'callRing 1.5s ease-in-out infinite' : 'none',
+            }}>
+              {ini}
+            </div>
+
+            {/* Ringtone animation (calling) */}
+            {status === 'calling' && (
+              <div style={{ display: 'flex', gap: 4, marginTop: 28 }}>
+                {[0, 1, 2, 3].map(i => (
+                  <div key={i} style={{
+                    width: 4, height: 20, borderRadius: 2,
+                    background: 'rgba(255,255,255,.35)',
+                    animationName: 'soundWave',
+                    animationDuration: '1.2s',
+                    animationTimingFunction: 'ease-in-out',
+                    animationIterationCount: 'infinite',
+                    animationDelay: `${i * 0.15}s`,
+                  }}/>
+                ))}
               </div>
             )}
           </div>
-        ) : (
-          <div className={`dialog-avatar ${grad}`} style={{
-            width: 110, height: 110, fontSize: 40,
-            boxShadow: '0 0 0 4px rgba(42,171,238,.3), 0 0 0 8px rgba(42,171,238,.1)',
+        )}
+
+        {/* Local camera preview (video call) */}
+        {isVideo && localCam && !camOff && (
+          <div style={{
+            position: 'absolute', bottom: 16, right: 16,
+            width: 100, height: 140,
+            borderRadius: 12, overflow: 'hidden',
+            border: '2px solid rgba(255,255,255,.3)',
+            background: '#000',
           }}>
-            {ini}
+            <video ref={localVideoRef} autoPlay muted playsInline
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}/>
           </div>
         )}
       </div>
 
-      {/* ── Bottom: Controls ───────────────────── */}
-      <div style={{ position: 'relative', zIndex: 10, width: '100%', padding: '0 20px' }}>
+      {/* ── Controls ─────────────────────────────── */}
+      <div style={{
+        position: 'relative', zIndex: 2,
+        padding: '0 20px 48px',
+      }}>
+        {/* Secondary buttons */}
         <div style={{
-          display: 'flex', justifyContent: 'center', gap: 20, marginBottom: 24,
-          flexWrap: 'wrap',
+          display: 'flex', justifyContent: 'center', gap: 16,
+          marginBottom: 24, flexWrap: 'wrap',
         }}>
-          {/* Mute */}
-          <CallBtn
-            label={muted ? 'Unmute' : 'Mute'}
-            active={muted}
-            onClick={toggleMute}
-            icon={muted ? '🔇' : '🎙️'}
-          />
-          {/* Speaker */}
-          <CallBtn
-            label={speakerOn ? 'Speaker' : 'Earphone'}
-            active={!speakerOn}
-            onClick={() => setSpeaker(s => !s)}
-            icon={speakerOn ? '🔊' : '🔈'}
-          />
-          {/* Camera (video only) */}
+          <CallBtn icon={muted ? '🔇' : '🎙️'} label={muted ? 'Ochiq' : 'Ovoz off'}
+            active={muted} onClick={toggleMute}/>
+          <CallBtn icon={speakerOn ? '🔊' : '🔈'} label="Karnay"
+            active={!speakerOn} onClick={() => setSpeaker(s => !s)}/>
           {isVideo && (
-            <CallBtn
-              label={camOff ? 'Camera on' : 'Camera off'}
-              active={camOff}
-              onClick={toggleCam}
-              icon={camOff ? '📵' : '📹'}
-            />
+            <CallBtn icon={camOff ? '📵' : '📹'} label={camOff ? 'Kamera' : 'Kamera off'}
+              active={camOff} onClick={toggleCam}/>
           )}
-          {/* Messages */}
-          <CallBtn
-            label="Xabar"
-            active={false}
-            onClick={() => {}}
-            icon="💬"
-          />
+          <CallBtn icon="💬" label="Xabar" active={false} onClick={() => {}}/>
         </div>
 
-        {/* End Call */}
+        {/* End Call button */}
         <div style={{ display: 'flex', justifyContent: 'center' }}>
           <button onClick={endCall} style={{
             width: 72, height: 72, borderRadius: '50%',
-            background: '#E53935', border: 'none', cursor: 'pointer',
+            background: '#F44336',
+            border: 'none', cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 4px 24px rgba(229,57,53,.5)',
-            transition: 'transform .1s',
+            boxShadow: '0 4px 20px rgba(244,67,54,.5)',
+            transition: 'transform .1s, box-shadow .1s',
           }}
-            onMouseDown={e => (e.currentTarget.style.transform = 'scale(.95)')}
-            onMouseUp={e => (e.currentTarget.style.transform = 'scale(1)')}
+            onMouseDown={e => { e.currentTarget.style.transform = 'scale(.92)'; }}
+            onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; }}
           >
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="white">
+            {/* Phone down icon */}
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="white"
+              style={{ transform: 'rotate(135deg)' }}>
               <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/>
             </svg>
           </button>
@@ -249,34 +311,46 @@ export default function CallScreen() {
       </div>
 
       <style jsx global>{`
+        @keyframes callRing {
+          0%   { box-shadow: 0 0 0 0 ${color}66; }
+          70%  { box-shadow: 0 0 0 24px ${color}00; }
+          100% { box-shadow: 0 0 0 0 ${color}00; }
+        }
         @keyframes callPulse {
-          0%,100% { box-shadow: 0 0 0 0 rgba(42,171,238,.4); }
-          50%      { box-shadow: 0 0 0 16px rgba(42,171,238,0); }
+          0%,100% { opacity: 1; }
+          50%      { opacity: .4; }
+        }
+        @keyframes soundWave {
+          0%,100% { transform: scaleY(.4); opacity: .4; }
+          50%     { transform: scaleY(1);  opacity: 1; }
         }
       `}</style>
     </div>
   );
 }
 
-// ── CallBtn component ──────────────────────────────────────
-function CallBtn({ icon, label, active, onClick }: {
-  icon: string; label: string; active: boolean; onClick: () => void;
-}) {
+// ── Tugma ─────────────────────────────────────────────────
+function CallBtn({
+  icon, label, active, onClick,
+}: { icon: string; label: string; active: boolean; onClick: () => void }) {
   return (
     <button onClick={onClick} style={{
       display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
       background: 'none', border: 'none', cursor: 'pointer', color: '#fff',
     }}>
       <div style={{
-        width: 56, height: 56, borderRadius: '50%',
-        background: active ? 'rgba(255,255,255,.25)' : 'rgba(255,255,255,.12)',
+        width: 58, height: 58, borderRadius: '50%',
+        background: active ? 'rgba(255,255,255,.3)' : 'rgba(255,255,255,.12)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 24,
-        transition: 'background .2s',
-      }}>
+        transition: 'background .2s, transform .1s',
+      }}
+        onMouseDown={e => { e.currentTarget.style.transform = 'scale(.9)'; }}
+        onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)'; }}
+      >
         {icon}
       </div>
-      <span style={{ fontSize: 11, opacity: .75 }}>{label}</span>
+      <span style={{ fontSize: 11, opacity: .7 }}>{label}</span>
     </button>
   );
 }

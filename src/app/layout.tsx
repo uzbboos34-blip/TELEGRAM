@@ -18,8 +18,8 @@ export const metadata: Metadata = {
     title: 'Ross Messenger',
   },
   icons: {
-    icon: '/icon.png',
-    apple: '/apple-touch-icon.png',
+    icon: '/icon-192.svg',
+    apple: '/icon-192.svg',
   },
 };
 

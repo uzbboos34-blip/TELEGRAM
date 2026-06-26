@@ -1,18 +1,16 @@
 /**
- * Telegram Messages — gramjs high-level methods
- * Muammo: PEER_ID_INVALID, CHAT_ID_INVALID, CHANNEL_INVALID
- * Yechim: Peer cache dan to'g'ri inputEntity ishlatish
+ * Telegram Messages — peer cache miss fix + raw message store
  */
 
 import { getTelegramClient } from './client';
-import { getCachedEntity } from './peer-cache';
+import { getCachedEntity, cachePeer } from './peer-cache';
+import { storeRawMsg } from './media';
 
 export interface Message {
   id: number;
   text: string;
   date: number;
   fromId?: string;
-  fromName?: string;
   isOutgoing: boolean;
   isRead: boolean;
   replyToMsgId?: number;
@@ -27,44 +25,100 @@ export interface MessageMedia {
   fileName?: string;
   fileSize?: number;
   duration?: number;
+  width?: number;
+  height?: number;
 }
 
+// ── Peer resolution with fallback ─────────────────────────
+async function resolveInputEntity(
+  client: any,
+  peerId: string,
+  peerType: string
+): Promise<unknown | null> {
+  // 1. Check cache first
+  let entity = getCachedEntity(peerId);
+  if (entity) return entity;
+
+  // 2. Try gramjs getInputEntity — uses session's internal entity cache
+  try {
+    entity = await client.getInputEntity(peerId);
+    if (entity) {
+      cachePeer(peerId, { id: peerId, type: peerType as any, inputEntity: entity, name: '' });
+      return entity;
+    }
+  } catch { /* try next */ }
+
+  // 3. Last resort: load all dialogs to populate cache
+  try {
+    console.log('[Messages] Loading dialogs to populate cache for peer:', peerId);
+    const { getDialogs } = await import('./dialogs');
+    await getDialogs(200);
+    entity = getCachedEntity(peerId);
+    if (entity) return entity;
+  } catch { /* give up */ }
+
+  return null;
+}
+
+// ── Message parser ─────────────────────────────────────────
 function parseRawMessage(msg: any): Message {
   let media: MessageMedia | undefined;
 
   if (msg.media) {
-    const mc = msg.media.className || '';
+    const mc = msg.media.className ?? '';
+
     if (mc.includes('Photo')) {
-      media = { type: 'photo' };
+      const sizes = msg.media.photo?.sizes ?? [];
+      const largest = sizes[sizes.length - 1];
+      media = {
+        type: 'photo',
+        width: largest?.w,
+        height: largest?.h,
+      };
     } else if (mc.includes('Document')) {
       const doc = msg.media.document;
-      const mime = doc?.mimeType || '';
-      const attrs = doc?.attributes || [];
+      const mime: string = doc?.mimeType ?? '';
+      const attrs: any[] = doc?.attributes ?? [];
 
-      const isVoice = attrs.some((a: any) => a.className === 'DocumentAttributeAudio' && a.voice);
-      const isVideo = attrs.some((a: any) => a.className === 'DocumentAttributeVideo');
-      const isAnim = attrs.some((a: any) => a.className === 'DocumentAttributeAnimated');
+      const isVoice   = attrs.some((a: any) => a.className === 'DocumentAttributeAudio' && a.voice);
+      const isVideo   = attrs.some((a: any) => a.className === 'DocumentAttributeVideo');
+      const isAnim    = attrs.some((a: any) => a.className === 'DocumentAttributeAnimated');
       const isSticker = attrs.some((a: any) => a.className === 'DocumentAttributeSticker');
+      const durAttr   = attrs.find((a: any) => a.className?.includes('Audio') || a.className?.includes('Video'));
+      const fnAttr    = attrs.find((a: any) => a.className === 'DocumentAttributeFilename');
+      const vidAttr   = attrs.find((a: any) => a.className === 'DocumentAttributeVideo');
 
-      const durAttr = attrs.find((a: any) => a.className === 'DocumentAttributeAudio' || a.className === 'DocumentAttributeVideo');
-      const fnAttr = attrs.find((a: any) => a.className === 'DocumentAttributeFilename');
-
-      if (isSticker) media = { type: 'sticker' };
-      else if (isVoice) media = { type: 'voice', duration: durAttr?.duration };
-      else if (isAnim) media = { type: 'gif' };
-      else if (isVideo || mime.startsWith('video/')) media = { type: 'video', mimeType: mime, duration: durAttr?.duration };
-      else if (mime.startsWith('audio/')) media = { type: 'audio', mimeType: mime, duration: durAttr?.duration };
-      else media = { type: 'document', mimeType: mime, fileName: fnAttr?.fileName, fileSize: Number(doc?.size || 0) };
+      if (isSticker)                               media = { type: 'sticker' };
+      else if (isVoice)                            media = { type: 'voice', duration: durAttr?.duration };
+      else if (isAnim || mime.includes('gif'))     media = { type: 'gif', mimeType: mime };
+      else if (isVideo || mime.startsWith('video')) media = {
+        type: 'video', mimeType: mime,
+        duration: durAttr?.duration,
+        width: vidAttr?.w, height: vidAttr?.h,
+        fileSize: Number(doc?.size ?? 0),
+      };
+      else if (mime.startsWith('audio'))           media = { type: 'audio', mimeType: mime, duration: durAttr?.duration };
+      else                                          media = {
+        type: 'document', mimeType: mime,
+        fileName: fnAttr?.fileName,
+        fileSize: Number(doc?.size ?? 0),
+      };
+    } else if (mc.includes('Geo')) {
+      media = { type: 'document', fileName: '📍 Joylashuv' };
+    } else if (mc.includes('Contact')) {
+      media = { type: 'document', fileName: '👤 Kontakt' };
+    } else if (mc.includes('Poll')) {
+      media = { type: 'document', fileName: '📊 So\'rovnoma' };
     }
   }
 
   return {
     id: msg.id,
-    text: msg.message || '',
-    date: msg.date || 0,
-    fromId: msg.fromId?.toString() || msg.peerId?.toString(),
-    isOutgoing: msg.out || false,
-    isRead: msg.mediaUnread === false,
+    text: msg.message ?? '',
+    date: msg.date ?? 0,
+    fromId: (msg.fromId ?? msg.peerId)?.toString(),
+    isOutgoing: msg.out ?? false,
+    isRead: !msg.mediaUnread,
     replyToMsgId: msg.replyTo?.replyToMsgId,
     media,
     forwarded: !!msg.fwdFrom,
@@ -72,81 +126,75 @@ function parseRawMessage(msg: any): Message {
   };
 }
 
+// ── getMessages ────────────────────────────────────────────
 export async function getMessages(
   peerId: string,
-  _peerType: string,
+  peerType: string,
   limit = 50,
   offsetId = 0
 ): Promise<Message[]> {
   try {
     const client = await getTelegramClient();
-    const inputEntity = getCachedEntity(peerId);
+    const inputEntity = await resolveInputEntity(client, peerId, peerType);
 
     if (!inputEntity) {
-      console.warn('[Messages] Peer not in cache, skipping:', peerId);
+      console.warn('[Messages] Could not resolve peer:', peerId);
       return [];
     }
 
-    // gramjs high-level getMessages — accessHash avtomatik
-    const result = await (client as any).getMessages(inputEntity, {
+    const rawMessages = await (client as any).getMessages(inputEntity, {
       limit,
       offsetId: offsetId || undefined,
     });
 
-    return result
-      .filter((m: any) => m.className === 'Message')
-      .map(parseRawMessage)
-      .reverse();
-  } catch (error: any) {
-    console.error('[Messages] getMessages error:', error?.message || error);
+    const messages = rawMessages.filter((m: any) => m.className === 'Message');
+
+    // Store raw messages for media download
+    for (const msg of messages) {
+      if (msg.media) storeRawMsg(peerId, msg.id, msg);
+    }
+
+    return messages.map(parseRawMessage).reverse();
+  } catch (e: any) {
+    console.error('[Messages] getMessages error:', e?.message ?? e);
     return [];
   }
 }
 
+// ── sendMessage ────────────────────────────────────────────
 export async function sendMessage(
   peerId: string,
-  _peerType: string,
+  peerType: string,
   text: string,
   replyToMsgId?: number
 ): Promise<void> {
-  try {
-    const client = await getTelegramClient();
-    const inputEntity = getCachedEntity(peerId);
+  const client = await getTelegramClient();
+  const inputEntity = await resolveInputEntity(client, peerId, peerType);
 
-    if (!inputEntity) {
-      throw new Error('Peer cache topilmadi. Avval dialog ro\'yxatini yangilang.');
-    }
-
-    await (client as any).sendMessage(inputEntity, {
-      message: text,
-      replyTo: replyToMsgId || undefined,
-    });
-  } catch (error: any) {
-    console.error('[Messages] sendMessage error:', error?.message || error);
-    throw error;
+  if (!inputEntity) {
+    throw new Error('Peer topilmadi. Dialog ro\'yxatini yangilang.');
   }
+
+  await (client as any).sendMessage(inputEntity, {
+    message: text,
+    replyTo: replyToMsgId || undefined,
+  });
 }
 
+// ── markAsRead ─────────────────────────────────────────────
 export async function markAsRead(
   peerId: string,
-  _peerType: string,
+  peerType: string,
   maxId: number
 ): Promise<void> {
   try {
     const client = await getTelegramClient();
-    const inputEntity = getCachedEntity(peerId);
+    const inputEntity = await resolveInputEntity(client, peerId, peerType);
     if (!inputEntity) return;
 
     const { Api } = await import('telegram');
-    const bigInt = (await import('big-integer')).default;
-
-    await (client as any).invoke(
-      new Api.messages.ReadHistory({
-        peer: inputEntity as any,
-        maxId,
-      })
-    );
+    await (client as any).invoke(new Api.messages.ReadHistory({ peer: inputEntity as any, maxId }));
   } catch (e: any) {
-    console.warn('[Messages] markAsRead error:', e?.message);
+    console.warn('[Messages] markAsRead:', e?.message);
   }
 }
