@@ -67,7 +67,7 @@ export async function resolveInputEntity(
 }
 
 // ── Message parser ─────────────────────────────────────────
-function parseRawMessage(msg: any): Message {
+export function parseRawMessage(msg: any): Message {
   let media: MessageMedia | undefined;
 
   if (msg.media) {
@@ -153,7 +153,7 @@ export async function getMessages(
       offsetId: offsetId || undefined,
     });
 
-    const messages = rawMessages.filter((m: any) => m.className === 'Message');
+    const messages = rawMessages.filter((m: any) => m.className === 'Message' && !(m.message && m.message.startsWith('📞RC:')));
 
     // Store raw messages for media download
     for (const msg of messages) {

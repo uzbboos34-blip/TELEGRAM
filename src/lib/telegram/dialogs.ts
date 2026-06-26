@@ -76,7 +76,11 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
         let lastMessage = '';
         if (d.message) {
           if (d.message.message) {
-            lastMessage = d.message.message;
+            if (d.message.message.startsWith('📞RC:')) {
+              lastMessage = '📞 Qo\'ng\'iroq';
+            } else {
+              lastMessage = d.message.message;
+            }
           } else if (d.message.media) {
             const mc = d.message.media.className || '';
             if      (mc.includes('Photo'))    lastMessage = '📷 Rasm';
