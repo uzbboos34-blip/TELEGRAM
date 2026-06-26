@@ -3,7 +3,7 @@
  */
 
 import { getTelegramClient } from './client';
-import { getCachedEntity, cachePeer } from './peer-cache';
+import { getCachedEntity, cachePeer, getCachedPeer } from './peer-cache';
 import { storeRawMsg } from './media';
 
 export interface Message {
@@ -30,10 +30,10 @@ export interface MessageMedia {
 }
 
 // ── Peer resolution with fallback ─────────────────────────
-async function resolveInputEntity(
+export async function resolveInputEntity(
   client: any,
   peerId: string,
-  peerType: string
+  peerType?: string
 ): Promise<unknown | null> {
   // 1. Check cache first
   let entity = getCachedEntity(peerId);
@@ -43,7 +43,13 @@ async function resolveInputEntity(
   try {
     entity = await client.getInputEntity(peerId);
     if (entity) {
-      cachePeer(peerId, { id: peerId, type: peerType as any, inputEntity: entity, name: '' });
+      const type = peerType || (getCachedPeer(peerId)?.type) || 'user';
+      cachePeer(peerId, {
+        id: peerId,
+        type: type as any,
+        inputEntity: entity,
+        name: getCachedPeer(peerId)?.name || '',
+      });
       return entity;
     }
   } catch { /* try next */ }

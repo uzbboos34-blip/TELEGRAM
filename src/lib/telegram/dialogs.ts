@@ -135,3 +135,71 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
     return [];
   }
 }
+
+export async function searchAndCreateChat(query: string): Promise<Dialog | null> {
+  try {
+    const client = await getTelegramClient();
+    const cleanQuery = query.trim().startsWith('@') ? query.trim().slice(1) : query.trim();
+
+    const entity = await (client as any).getEntity(cleanQuery);
+    if (!entity) return null;
+
+    const id = entity.id?.toString();
+    if (!id) return null;
+
+    let type: Dialog['type'] = 'user';
+    let isBot = false;
+    let isGroup = false;
+    let isChannel = false;
+
+    if (entity.className === 'User') {
+      isBot = entity.bot || false;
+      type = isBot ? 'bot' : 'user';
+    } else if (entity.className === 'Chat') {
+      isGroup = true;
+      type = 'group';
+    } else if (entity.className === 'Channel') {
+      if (entity.megagroup || entity.gigagroup) {
+        isGroup = true;
+        type = 'group';
+      } else {
+        isChannel = true;
+        type = 'channel';
+      }
+    }
+
+    const { parseUserStatus } = await import('./peer-cache');
+    const { isOnline, text: statusText } = parseUserStatus(entity.status);
+
+    const name = entity.title || `${entity.firstName || ''} ${entity.lastName || ''}`.trim() || 'Unknown';
+
+    cachePeer(id, {
+      id,
+      type,
+      inputEntity: entity,
+      name,
+      isBot,
+      isOnline,
+      statusText,
+    });
+
+    return {
+      id,
+      name,
+      unreadCount: 0,
+      isGroup,
+      isChannel,
+      isBot,
+      online: isOnline,
+      statusText,
+      isPinned: false,
+      isMuted: false,
+      type,
+      lastMessage: 'Suhbat boshlash uchun yozing',
+    };
+  } catch (e) {
+    console.error('[Dialogs] searchAndCreateChat error:', e);
+    return null;
+  }
+}
+

@@ -5,22 +5,9 @@ import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { getDialogs, Dialog } from '@/lib/telegram/dialogs';
 import { logout, getCurrentUser } from '@/lib/telegram/auth';
-import { downloadProfilePhoto } from '@/lib/telegram/media';
+import TelegramAvatar from './TelegramAvatar';
 
 // ── Avatar helpers ─────────────────────────────────────────
-const GRADS = [
-  'avatar-gradient-1','avatar-gradient-2','avatar-gradient-3',
-  'avatar-gradient-4','avatar-gradient-5','avatar-gradient-6',
-  'avatar-gradient-7','avatar-gradient-8',
-];
-function getGrad(id: string) {
-  let h = 0;
-  for (let i=0;i<id.length;i++) h=((h<<5)-h)+id.charCodeAt(i);
-  return GRADS[Math.abs(h)%GRADS.length];
-}
-function getInitials(name: string) {
-  return name.split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase()||'?';
-}
 function formatTime(ts?: number) {
   if (!ts) return '';
   const d=new Date(ts*1000), now=new Date(), diff=now.getTime()-d.getTime();
@@ -28,45 +15,6 @@ function formatTime(ts?: number) {
   if (diff<day) return d.toLocaleTimeString('ru',{hour:'2-digit',minute:'2-digit'});
   if (diff<7*day) return d.toLocaleDateString('ru',{weekday:'short'});
   return d.toLocaleDateString('ru',{day:'2-digit',month:'2-digit'});
-}
-
-// ── TelegramAvatar — profil rasimini yuklaydigan avatar ────
-function TelegramAvatar({ dialog, size = 54 }: { dialog: Dialog; size?: number }) {
-  const [photoUrl, setPhotoUrl] = useState<string|null>(null);
-  const [photoErr, setPhotoErr] = useState(false);
-  const grad = getGrad(dialog.id);
-
-  useEffect(() => {
-    // Only load for users (not groups/channels)
-    if (!dialog.isGroup && !dialog.isChannel && !dialog.isBot) {
-      downloadProfilePhoto(dialog.id)
-        .then(url => { if (url) setPhotoUrl(url); })
-        .catch(() => {});
-    }
-  }, [dialog.id, dialog.isGroup, dialog.isChannel, dialog.isBot]);
-
-  const showPhoto = photoUrl && !photoErr;
-
-  return (
-    <div className={`dialog-avatar ${grad}`}
-      style={{width:size, height:size, position:'relative', overflow:'hidden', flexShrink:0}}>
-      {showPhoto ? (
-        <img src={photoUrl} alt={dialog.name}
-          style={{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}
-          onError={() => setPhotoErr(true)}
-        />
-      ) : dialog.isChannel ? (
-        <span style={{fontSize:22}}>📢</span>
-      ) : dialog.isGroup ? (
-        <span style={{fontSize:22}}>👥</span>
-      ) : dialog.isBot ? (
-        <span style={{fontSize:22}}>🤖</span>
-      ) : (
-        <span>{getInitials(dialog.name)}</span>
-      )}
-      {dialog.online && <span className="online-dot"/>}
-    </div>
-  );
 }
 
 // ─────────────────────────────────────────────────────────
@@ -81,6 +29,36 @@ export default function Sidebar() {
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenu]   = useState(false);
   const user = getCurrentUser();
+
+  const [newChatOpen, setNewChatOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState('');
+
+  const handleStartNewChat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    setSearchLoading(true);
+    setSearchError('');
+    try {
+      const { searchAndCreateChat } = await import('@/lib/telegram/dialogs');
+      const dialog = await searchAndCreateChat(searchQuery);
+      if (dialog) {
+        if (!dialogs.some(d => d.id === dialog.id)) {
+          setDialogs([dialog, ...dialogs]);
+        }
+        setNewChatOpen(false);
+        setSearchQuery('');
+        openChat(dialog);
+      } else {
+        setSearchError('Foydalanuvchi topilmadi. Username, telefon yoki ID noto\'g\'ri bo\'lishi mumkin.');
+      }
+    } catch (err: any) {
+      setSearchError('Qidirishda xatolik yuz berdi: ' + (err?.message || err));
+    } finally {
+      setSearchLoading(false);
+    }
+  };
 
   const loadDialogs = useCallback(async () => {
     setLoading(true);
@@ -134,7 +112,7 @@ export default function Sidebar() {
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
             </svg>
           </button>
-          <button className="icon-btn">
+          <button className="icon-btn" onClick={() => setNewChatOpen(true)} title="Yangi chat">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -211,6 +189,85 @@ export default function Sidebar() {
           )}
         </div>
       </aside>
+
+      {newChatOpen && (
+        <div className="modal-overlay" style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.65)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100,
+        }} onClick={() => { setNewChatOpen(false); setSearchError(''); setSearchQuery(''); }}>
+          <div className="modal-content" style={{
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--divider)',
+            borderRadius: 'var(--radius-lg)',
+            width: '100%',
+            maxWidth: 400,
+            padding: 24,
+            boxShadow: 'var(--shadow-lg)',
+            margin: '0 16px',
+          }} onClick={e => e.stopPropagation()}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>Yangi chat boshlash</h2>
+            <form onSubmit={handleStartNewChat}>
+              <div className="field-group" style={{ marginBottom: 16 }}>
+                <label className="field-label" style={{ display: 'block', fontSize: 12, marginBottom: 6, color: 'var(--text-secondary)' }}>Username, telefon raqam yoki ID</label>
+                <input
+                  type="text"
+                  className="field-input"
+                  placeholder="Masalan: @durov yoki +998901234567"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  autoFocus
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--divider)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </div>
+
+              {searchError && (
+                <div style={{
+                  padding: '10px 12px',
+                  background: 'rgba(229, 57, 53, 0.1)',
+                  border: '1px solid rgba(229, 57, 53, 0.3)',
+                  borderRadius: 'var(--radius-md)',
+                  color: 'var(--error)',
+                  fontSize: 12,
+                  marginBottom: 16,
+                }}>
+                  ⚠️ {searchError}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => { setNewChatOpen(false); setSearchError(''); setSearchQuery(''); }}
+                  style={{ width: 'auto', padding: '8px 16px' }}
+                >
+                  Bekor qilish
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={searchLoading || !searchQuery.trim()}
+                  style={{ width: 'auto', padding: '8px 16px' }}
+                >
+                  {searchLoading ? 'Qidirilmoqda...' : 'Suhbat boshlash'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -223,7 +280,7 @@ function DialogItem({ dialog, isActive, onClick }: {
 
   return (
     <div className={`dialog-item ${isActive?'active':''}`} onClick={onClick}>
-      <TelegramAvatar dialog={dialog}/>
+      <TelegramAvatar id={dialog.id} name={dialog.name} type={dialog.type} isOnline={dialog.online} size={54} />
 
       <div className="dialog-content">
         <div className="dialog-top">

@@ -6,6 +6,7 @@ import { useAppStore } from '@/lib/store';
 import { getMessages, sendMessage, markAsRead, Message } from '@/lib/telegram/messages';
 import { downloadMessagePhoto } from '@/lib/telegram/media';
 import { getCachedPeer } from '@/lib/telegram/peer-cache';
+import TelegramAvatar from '@/components/chat/TelegramAvatar';
 
 // ── Helpers ────────────────────────────────────────────────
 const GRADS = ['avatar-gradient-1','avatar-gradient-2','avatar-gradient-3',
@@ -68,10 +69,111 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [err, setErr]         = useState('');
 
+  const [isRecording, setIsRecording] = useState(false);
+  const [recDuration, setRecDuration] = useState(0);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
   const chatMsgs  = messages[chatId] || [];
   const grouped   = groupByDate(chatMsgs);
+
+  // ── Ovoz yozishni boshlash ───────────────────────────
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const options = { mimeType: 'audio/webm' };
+      
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, options);
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        
+        if (audioChunksRef.current.length > 0 && recDuration > 0.5) {
+          const audioBlob = new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/ogg' });
+          const duration = recDuration;
+          
+          setSending(true);
+          const tmpId = Date.now();
+          const tmp: Message = {
+            id: tmpId,
+            text: '',
+            date: Math.floor(Date.now() / 1000),
+            isOutgoing: true,
+            isRead: false,
+            media: { type: 'voice', duration }
+          };
+          addMessage(chatId, tmp);
+          
+          try {
+            const { sendVoiceMessage } = await import('@/lib/telegram/media');
+            await sendVoiceMessage(chatId, peerType, audioBlob, duration);
+            const data = await getMessages(chatId, peerType, 50);
+            setMessages(chatId, data);
+          } catch (e: any) {
+            setErr('Ovoz yozuvi yuborilmadi: ' + (e?.message || e));
+          } finally {
+            setSending(false);
+          }
+        }
+        
+        setRecDuration(0);
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start(200);
+      setIsRecording(true);
+      setRecDuration(0);
+
+      recTimerRef.current = setInterval(() => {
+        setRecDuration(d => d + 1);
+      }, 1000);
+
+    } catch (err: any) {
+      setErr('Mikrofon ruxsati berilmadi: ' + (err?.message || err));
+    }
+  }
+
+  // ── Ovoz yozishni to'xtatish va yuborish ──────────────
+  function stopAndSendRecording() {
+    if (recTimerRef.current) clearInterval(recTimerRef.current);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  }
+
+  // ── Ovoz yozishni bekor qilish ───────────────────────
+  function cancelRecording() {
+    if (recTimerRef.current) clearInterval(recTimerRef.current);
+    audioChunksRef.current = [];
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecDuration(0);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (recTimerRef.current) clearInterval(recTimerRef.current);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setErr('');
@@ -112,9 +214,7 @@ export default function ChatPage() {
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
 
-        <div className={`dialog-avatar ${getGrad(chatId)}`} style={{width:40,height:40,fontSize:15}}>
-          {peerType==='channel'?'📢':peerType==='group'?'👥':peer?.isBot?'🤖':initials(chatName)}
-        </div>
+        <TelegramAvatar id={chatId} name={chatName} type={peerType} isOnline={peer?.isOnline} size={40} />
 
         <div className="chat-header-info">
           <div className="chat-header-name">{chatName}</div>
@@ -193,49 +293,93 @@ export default function ChatPage() {
 
       {/* ── Input ────────────────────────────────── */}
       <div className="input-area">
-        <div className="input-actions-left">
-          <button className="icon-btn">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-              <line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
-            </svg>
-          </button>
-        </div>
+        {isRecording ? (
+          <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 16 }}>
+            {/* Red flashing dot and recording indicator */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+              <span className="recording-dot" style={{
+                width: 10,
+                height: 10,
+                borderRadius: '50%',
+                background: 'var(--error)',
+                display: 'inline-block',
+                animation: 'pulse 1.2s infinite ease-in-out',
+              }}/>
+              <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+                Ovozli xabar yozilmoqda: <strong>{fmtDur(recDuration)}</strong>
+              </span>
+            </div>
+            
+            {/* Action buttons */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <button className="icon-btn" onClick={cancelRecording} title="Bekor qilish" style={{ color: 'var(--error)' }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  <line x1="10" y1="11" x2="10" y2="17"/>
+                  <line x1="14" y1="11" x2="14" y2="17"/>
+                </svg>
+              </button>
+              <button className="send-btn" onClick={stopAndSendRecording} title="Yuborish" style={{ background: 'var(--accent)', color: 'white' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="22" y1="2" x2="11" y2="13"/>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="input-actions-left">
+              <button className="icon-btn">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+                  <line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
+                </svg>
+              </button>
+            </div>
 
-        <div className="input-field-wrap">
-          <textarea ref={inputRef} className="message-input"
-            placeholder="Xabar yozing..." value={text} rows={1}
-            onChange={e=>{
-              setText(e.target.value);
-              e.target.style.height='auto';
-              e.target.style.height=Math.min(e.target.scrollHeight,120)+'px';
-            }}
-            onKeyDown={handleKey}
-          />
-        </div>
+            <div className="input-field-wrap">
+              <textarea ref={inputRef} className="message-input"
+                placeholder="Xabar yozing..." value={text} rows={1}
+                onChange={e=>{
+                  setText(e.target.value);
+                  e.target.style.height='auto';
+                  e.target.style.height=Math.min(e.target.scrollHeight,120)+'px';
+                }}
+                onKeyDown={handleKey}
+              />
+            </div>
 
-        <div className="input-actions-right">
-          {text.trim() ? (
-            <button className="send-btn" onClick={handleSend} disabled={sending}>
-              {sending
-                ? <div className="spinner" style={{width:18,height:18,borderWidth:2,borderColor:'rgba(255,255,255,.3)',borderTopColor:'white'}}/>
-                : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-              }
-            </button>
-          ) : <>
-            <button className="icon-btn">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-            </button>
-            <button className="icon-btn">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-            </button>
-          </>}
-        </div>
+            <div className="input-actions-right">
+              {text.trim() ? (
+                <button className="send-btn" onClick={handleSend} disabled={sending}>
+                  {sending
+                    ? <div className="spinner" style={{width:18,height:18,borderWidth:2,borderColor:'rgba(255,255,255,.3)',borderTopColor:'white'}}/>
+                    : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  }
+                </button>
+              ) : <>
+                <button className="icon-btn">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <button className="icon-btn" onClick={startRecording} title="Ovoz yozish">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
+              </>}
+            </div>
+          </>
+        )}
       </div>
 
       <style jsx>{`
         @media (max-width: 768px) { #back-btn { display:flex !important; } }
         #back-btn { display:none; }
+        @keyframes pulse {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.9); }
+          100% { opacity: 1; transform: scale(1); }
+        }
       `}</style>
     </div>
   );

@@ -70,7 +70,8 @@ export async function downloadProfilePhoto(peerId: string): Promise<string | nul
 
   try {
     const client = await getTelegramClient();
-    const inputEntity = getCachedEntity(peerId);
+    const { resolveInputEntity } = await import('./messages');
+    const inputEntity = await resolveInputEntity(client, peerId);
     if (!inputEntity) return null;
 
     const raw = await (client as any).downloadProfilePhoto(inputEntity, { isBig: false });

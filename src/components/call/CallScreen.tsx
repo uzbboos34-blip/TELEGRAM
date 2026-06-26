@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/lib/store';
 import { callManager, CallSignal } from '@/lib/webrtc/call-manager';
+import { getCachedPeer } from '@/lib/telegram/peer-cache';
 
 // ── Ranglar ───────────────────────────────────────────────
 const COLORS = ['#2AABEE','#E91E63','#9C27B0','#4CAF50','#FF9800','#00BCD4','#F44336','#3F51B5'];
@@ -237,11 +238,15 @@ function ActiveCallUI() {
   if (!activeCall) return null;
   const color = getColor(activeCall.peerId);
 
+  const peer = getCachedPeer(activeCall.peerId);
+  const isPeerOnline = peer?.isOnline;
+
   const statusLabel =
-    connState === 'connecting' || connState === 'waiting' ? 'Ulanilmoqda...' :
-    connState === 'connected' ? fmtDur(duration) :
-    connState === 'disconnected' ? 'Uzildi' :
-    connState === 'failed' ? 'Ulanmadi' : 'Kutilmoqda...';
+    connState === 'connecting' || connState === 'waiting'
+      ? (isPeerOnline ? 'Ulanilmoqda...' : 'Qo\'ng\'iroq qilinmoqda (Oflayn)...')
+      : connState === 'connected' ? fmtDur(duration)
+      : connState === 'disconnected' ? 'Uzildi'
+      : connState === 'failed' ? 'Ulanmadi' : 'Kutilmoqda...';
 
   return (
     <div style={{
@@ -249,6 +254,26 @@ function ActiveCallUI() {
       background: isVideo ? '#000' : '#17212B',
       display:'flex', flexDirection:'column',
     }}>
+      {/* Offline banner */}
+      {!isPeerOnline && (connState === 'connecting' || connState === 'waiting') && (
+        <div style={{
+          position: 'absolute',
+          top: 20,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: 'rgba(255, 152, 0, 0.15)',
+          border: '1px solid rgba(255, 158, 0, 0.3)',
+          color: '#FFB74D',
+          padding: '8px 16px',
+          borderRadius: 20,
+          fontSize: 13,
+          zIndex: 10,
+          whiteSpace: 'nowrap',
+          boxShadow: '0 2px 10px rgba(0,0,0,.3)',
+        }}>
+          ⚠️ Yaqiningiz oflayn. U ilovani ochishi kerak.
+        </div>
+      )}
       {/* Background */}
       {!isVideo && (
         <div style={{
