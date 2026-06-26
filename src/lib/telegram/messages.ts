@@ -1,14 +1,18 @@
 /**
- * Telegram Messages — Dynamic imports, gramjs compatible BigInteger
+ * Telegram Messages — gramjs high-level methods
+ * Muammo: PEER_ID_INVALID, CHAT_ID_INVALID, CHANNEL_INVALID
+ * Yechim: Peer cache dan to'g'ri inputEntity ishlatish
  */
 
 import { getTelegramClient } from './client';
+import { getCachedEntity } from './peer-cache';
 
 export interface Message {
   id: number;
   text: string;
   date: number;
   fromId?: string;
+  fromName?: string;
   isOutgoing: boolean;
   isRead: boolean;
   replyToMsgId?: number;
@@ -18,139 +22,131 @@ export interface Message {
 }
 
 export interface MessageMedia {
-  type: 'photo' | 'video' | 'audio' | 'document' | 'sticker';
+  type: 'photo' | 'video' | 'audio' | 'document' | 'sticker' | 'voice' | 'gif';
   mimeType?: string;
   fileName?: string;
   fileSize?: number;
+  duration?: number;
 }
 
-async function makeInputPeer(peerId: string, peerType: 'user' | 'group' | 'channel') {
-  const { Api } = await import('telegram');
-  const bigInt = (await import('big-integer')).default;
+function parseRawMessage(msg: any): Message {
+  let media: MessageMedia | undefined;
 
-  if (peerType === 'user') {
-    return new Api.InputPeerUser({ userId: bigInt(peerId), accessHash: bigInt(0) });
-  } else if (peerType === 'group') {
-    return new Api.InputPeerChat({ chatId: bigInt(peerId) });
-  } else {
-    return new Api.InputPeerChannel({ channelId: bigInt(peerId), accessHash: bigInt(0) });
+  if (msg.media) {
+    const mc = msg.media.className || '';
+    if (mc.includes('Photo')) {
+      media = { type: 'photo' };
+    } else if (mc.includes('Document')) {
+      const doc = msg.media.document;
+      const mime = doc?.mimeType || '';
+      const attrs = doc?.attributes || [];
+
+      const isVoice = attrs.some((a: any) => a.className === 'DocumentAttributeAudio' && a.voice);
+      const isVideo = attrs.some((a: any) => a.className === 'DocumentAttributeVideo');
+      const isAnim = attrs.some((a: any) => a.className === 'DocumentAttributeAnimated');
+      const isSticker = attrs.some((a: any) => a.className === 'DocumentAttributeSticker');
+
+      const durAttr = attrs.find((a: any) => a.className === 'DocumentAttributeAudio' || a.className === 'DocumentAttributeVideo');
+      const fnAttr = attrs.find((a: any) => a.className === 'DocumentAttributeFilename');
+
+      if (isSticker) media = { type: 'sticker' };
+      else if (isVoice) media = { type: 'voice', duration: durAttr?.duration };
+      else if (isAnim) media = { type: 'gif' };
+      else if (isVideo || mime.startsWith('video/')) media = { type: 'video', mimeType: mime, duration: durAttr?.duration };
+      else if (mime.startsWith('audio/')) media = { type: 'audio', mimeType: mime, duration: durAttr?.duration };
+      else media = { type: 'document', mimeType: mime, fileName: fnAttr?.fileName, fileSize: Number(doc?.size || 0) };
+    }
   }
+
+  return {
+    id: msg.id,
+    text: msg.message || '',
+    date: msg.date || 0,
+    fromId: msg.fromId?.toString() || msg.peerId?.toString(),
+    isOutgoing: msg.out || false,
+    isRead: msg.mediaUnread === false,
+    replyToMsgId: msg.replyTo?.replyToMsgId,
+    media,
+    forwarded: !!msg.fwdFrom,
+    editDate: msg.editDate,
+  };
 }
 
 export async function getMessages(
   peerId: string,
-  peerType: 'user' | 'group' | 'channel',
+  _peerType: string,
   limit = 50,
   offsetId = 0
 ): Promise<Message[]> {
   try {
     const client = await getTelegramClient();
-    const { Api } = await import('telegram');
-    const bigInt = (await import('big-integer')).default;
+    const inputEntity = getCachedEntity(peerId);
 
-    const inputPeer = await makeInputPeer(peerId, peerType);
-
-    const result = await client.invoke(
-      new Api.messages.GetHistory({
-        peer: inputPeer,
-        offsetId,
-        offsetDate: 0,
-        addOffset: 0,
-        limit,
-        maxId: 0,
-        minId: 0,
-        hash: bigInt(0),
-      })
-    );
-
-    if (
-      result instanceof Api.messages.Messages ||
-      result instanceof Api.messages.MessagesSlice ||
-      result instanceof Api.messages.ChannelMessages
-    ) {
-      return result.messages
-        .filter((m): m is InstanceType<typeof Api.Message> => m instanceof Api.Message)
-        .map((msg) => {
-          let media: MessageMedia | undefined;
-
-          if (msg.media instanceof Api.MessageMediaPhoto) {
-            media = { type: 'photo' };
-          } else if (msg.media instanceof Api.MessageMediaDocument) {
-            const doc = msg.media.document;
-            if (doc instanceof Api.Document) {
-              const mime = doc.mimeType;
-              if (mime.startsWith('video/')) media = { type: 'video', mimeType: mime };
-              else if (mime.startsWith('audio/')) media = { type: 'audio', mimeType: mime };
-              else media = { type: 'document', mimeType: mime };
-            }
-          }
-
-          return {
-            id: msg.id,
-            text: msg.message || '',
-            date: msg.date,
-            fromId: (msg as any).fromId?.toString(),
-            isOutgoing: msg.out || false,
-            isRead: !(msg as any).unread,
-            replyToMsgId: (msg as any).replyTo?.replyToMsgId,
-            media,
-            forwarded: !!(msg as any).fwdFrom,
-            editDate: (msg as any).editDate,
-          } as Message;
-        })
-        .reverse();
+    if (!inputEntity) {
+      console.warn('[Messages] Peer not in cache, skipping:', peerId);
+      return [];
     }
 
-    return [];
-  } catch (error) {
-    console.error('[Messages] getMessages error:', error);
+    // gramjs high-level getMessages — accessHash avtomatik
+    const result = await (client as any).getMessages(inputEntity, {
+      limit,
+      offsetId: offsetId || undefined,
+    });
+
+    return result
+      .filter((m: any) => m.className === 'Message')
+      .map(parseRawMessage)
+      .reverse();
+  } catch (error: any) {
+    console.error('[Messages] getMessages error:', error?.message || error);
     return [];
   }
 }
 
 export async function sendMessage(
   peerId: string,
-  peerType: 'user' | 'group' | 'channel',
+  _peerType: string,
   text: string,
   replyToMsgId?: number
 ): Promise<void> {
   try {
     const client = await getTelegramClient();
-    const { Api } = await import('telegram');
-    const bigInt = (await import('big-integer')).default;
+    const inputEntity = getCachedEntity(peerId);
 
-    const inputPeer = await makeInputPeer(peerId, peerType);
-    const randomId = bigInt(Math.floor(Math.random() * 1e15));
+    if (!inputEntity) {
+      throw new Error('Peer cache topilmadi. Avval dialog ro\'yxatini yangilang.');
+    }
 
-    await client.invoke(
-      new Api.messages.SendMessage({
-        peer: inputPeer,
-        message: text,
-        randomId,
-        replyTo: replyToMsgId
-          ? new Api.InputReplyToMessage({ replyToMsgId })
-          : undefined,
-        noWebpage: true,
-      })
-    );
-  } catch (error) {
-    console.error('[Messages] sendMessage error:', error);
+    await (client as any).sendMessage(inputEntity, {
+      message: text,
+      replyTo: replyToMsgId || undefined,
+    });
+  } catch (error: any) {
+    console.error('[Messages] sendMessage error:', error?.message || error);
     throw error;
   }
 }
 
 export async function markAsRead(
   peerId: string,
-  peerType: 'user' | 'group' | 'channel',
+  _peerType: string,
   maxId: number
 ): Promise<void> {
   try {
     const client = await getTelegramClient();
-    const { Api } = await import('telegram');
+    const inputEntity = getCachedEntity(peerId);
+    if (!inputEntity) return;
 
-    const inputPeer = await makeInputPeer(peerId, peerType);
-    await client.invoke(new Api.messages.ReadHistory({ peer: inputPeer, maxId }));
-  } catch (e) {
-    console.error('[Messages] markAsRead error:', e);
+    const { Api } = await import('telegram');
+    const bigInt = (await import('big-integer')).default;
+
+    await (client as any).invoke(
+      new Api.messages.ReadHistory({
+        peer: inputEntity as any,
+        maxId,
+      })
+    );
+  } catch (e: any) {
+    console.warn('[Messages] markAsRead error:', e?.message);
   }
 }
