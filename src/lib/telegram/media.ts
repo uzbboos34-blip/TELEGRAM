@@ -42,13 +42,15 @@ export async function downloadMessagePhoto(
     }
     if (!rawMsg) return null;
 
+    const msg = rawMsg as any;
+    const isSticker = msg.media?.document?.attributes?.some((a: any) => a.className === 'DocumentAttributeSticker');
+
     const data = await (client as any).downloadMedia(rawMsg, {
       workers: 1,
-      thumbSize: thumbSize as any,
+      thumbSize: isSticker ? undefined : (thumbSize as any),
     });
     if (!data?.length) return null;
 
-    const msg = rawMsg as any;
     const mime = msg.media?.document?.mimeType ?? 'image/jpeg';
     const url = URL.createObjectURL(new Blob([data], { type: mime }));
     photoCache.set(key, url);
@@ -124,21 +126,21 @@ export async function sendVoiceMessage(
   durationSec: number,
 ): Promise<void> {
   const { getTelegramClient } = await import('./client');
-  const { getCachedEntity, cachePeer } = await import('./peer-cache');
-  const { Api } = await import('telegram');
+  const { getCachedEntity }   = await import('./peer-cache');
+  const { Api }               = await import('telegram');
+  const { CustomFile }        = await import('telegram/client/uploads');
 
   const client = await getTelegramClient();
   let inputEntity = getCachedEntity(peerId);
 
   if (!inputEntity) {
-    // Fallback: getInputEntity
     try { inputEntity = await (client as any).getInputEntity(peerId); }
     catch { throw new Error('Peer topilmadi'); }
   }
 
-  // ArrayBuffer→File
-  const buffer = await audioBlob.arrayBuffer();
-  const file   = new File([buffer], 'voice.ogg', { type: audioBlob.type || 'audio/ogg' });
+  const arrayBuffer = await audioBlob.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const file = new CustomFile('voice.ogg', buffer.length, '', buffer);
 
   await (client as any).sendFile(inputEntity, {
     file,
@@ -152,6 +154,31 @@ export async function sendVoiceMessage(
         waveform: undefined,
       }),
     ],
+  });
+}
+
+// ── Fayl yuborish ─────────────────────────────────────
+export async function sendFileMessage(
+  peerId: string,
+  peerType: string,
+  fileBuffer: ArrayBuffer,
+  fileName: string,
+  mimeType: string,
+): Promise<void> {
+  const { getTelegramClient } = await import('./client');
+  const { CustomFile }        = await import('telegram/client/uploads');
+  const { resolveInputEntity } = await import('./messages');
+
+  const client = await getTelegramClient();
+  const inputEntity = await resolveInputEntity(client, peerId, peerType);
+  if (!inputEntity) throw new Error('Peer topilmadi');
+
+  const buffer = Buffer.from(fileBuffer);
+  const file = new CustomFile(fileName, buffer.length, '', buffer);
+
+  await (client as any).sendFile(inputEntity, {
+    file,
+    forceDocument: !mimeType.startsWith('image/'),
   });
 }
 

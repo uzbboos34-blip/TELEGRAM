@@ -11,6 +11,7 @@ export interface Message {
   text: string;
   date: number;
   fromId?: string;
+  senderName?: string;
   isOutgoing: boolean;
   isRead: boolean;
   replyToMsgId?: number;
@@ -118,11 +119,23 @@ export function parseRawMessage(msg: any): Message {
     }
   }
 
+  const fromIdStr = (msg.fromId ?? msg.peerId)?.toString();
+  let senderName = '';
+  if (msg.sender) {
+    senderName = msg.sender.title || `${msg.sender.firstName || ''} ${msg.sender.lastName || ''}`.trim();
+  } else if (msg._sender) {
+    senderName = msg._sender.title || `${msg._sender.firstName || ''} ${msg._sender.lastName || ''}`.trim();
+  }
+  if (!senderName && fromIdStr) {
+    senderName = getCachedPeer(fromIdStr)?.name || '';
+  }
+
   return {
     id: msg.id,
     text: msg.message ?? '',
     date: msg.date ?? 0,
-    fromId: (msg.fromId ?? msg.peerId)?.toString(),
+    fromId: fromIdStr,
+    senderName,
     isOutgoing: msg.out ?? false,
     isRead: !msg.mediaUnread,
     replyToMsgId: msg.replyTo?.replyToMsgId,

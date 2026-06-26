@@ -5,7 +5,7 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { getMessages, sendMessage, markAsRead, Message } from '@/lib/telegram/messages';
 import { downloadMessagePhoto } from '@/lib/telegram/media';
-import { getCachedPeer } from '@/lib/telegram/peer-cache';
+import { getCachedPeer, cachePeer } from '@/lib/telegram/peer-cache';
 import TelegramAvatar from '@/components/chat/TelegramAvatar';
 
 // ── Helpers ────────────────────────────────────────────────
@@ -78,6 +78,7 @@ export default function ChatPage() {
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const chatMsgs  = messages[chatId] || [];
   const grouped   = groupByDate(chatMsgs);
 
@@ -174,6 +175,43 @@ export default function ChatPage() {
       if (recTimerRef.current) clearInterval(recTimerRef.current);
     };
   }, []);
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setSending(true);
+    setErr('');
+
+    try {
+      const tmpId = Date.now();
+      const tmp: Message = {
+        id: tmpId,
+        text: '',
+        date: Math.floor(Date.now() / 1000),
+        isOutgoing: true,
+        isRead: false,
+        media: {
+          type: file.type.startsWith('image/') ? 'photo' : 'document',
+          fileName: file.name,
+          fileSize: file.size,
+        }
+      };
+      addMessage(chatId, tmp);
+
+      const buffer = await file.arrayBuffer();
+      const { sendFileMessage } = await import('@/lib/telegram/media');
+      await sendFileMessage(chatId, peerType, buffer, file.name, file.type);
+
+      const data = await getMessages(chatId, peerType, 50);
+      setMessages(chatId, data);
+    } catch (e: any) {
+      setErr('Fayl yuborilmadi: ' + (e?.message || e));
+    } finally {
+      setSending(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true); setErr('');
@@ -274,7 +312,7 @@ export default function ChatPage() {
             <div key={date} className="message-group">
               <div className="date-divider"><span>{date}</span></div>
               {msgs.map(msg=>(
-                <MessageBubble key={msg.id} msg={msg} chatId={chatId}/>
+                <MessageBubble key={msg.id} msg={msg} chatId={chatId} peerType={peerType}/>
               ))}
             </div>
           ))
@@ -293,6 +331,12 @@ export default function ChatPage() {
 
       {/* ── Input ────────────────────────────────── */}
       <div className="input-area">
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileChange}
+          style={{ display: 'none' }}
+        />
         {isRecording ? (
           <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 16 }}>
             {/* Red flashing dot and recording indicator */}
@@ -360,7 +404,7 @@ export default function ChatPage() {
                   }
                 </button>
               ) : <>
-                <button className="icon-btn">
+                <button className="icon-btn" onClick={() => fileInputRef.current?.click()} title="Fayl yuborish">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 </button>
                 <button className="icon-btn" onClick={startRecording} title="Ovoz yozish">
@@ -385,13 +429,86 @@ export default function ChatPage() {
   );
 }
 
+// ── Sender Name dynamic resolver ───────────────────────────
+const SENDER_COLORS = ['#29b6f6', '#ec407a', '#ab47bc', '#66bb6a', '#ffa726', '#26c6da', '#ff7043', '#5c6bc0'];
+function getSenderColor(id: string) {
+  let h = 0; for (let i = 0; i < id.length; i++) h = ((h << 5) - h) + id.charCodeAt(i);
+  return SENDER_COLORS[Math.abs(h) % SENDER_COLORS.length];
+}
+
+function SenderName({ fromId, fallback }: { fromId?: string; fallback?: string }) {
+  const [name, setName] = useState(fallback || '');
+
+  useEffect(() => {
+    if (fallback) {
+      setName(fallback);
+      return;
+    }
+    if (!fromId) return;
+
+    const cached = getCachedPeer(fromId);
+    if (cached?.name) {
+      setName(cached.name);
+      return;
+    }
+
+    let active = true;
+    const loadSender = async () => {
+      try {
+        const { getTelegramClient } = await import('@/lib/telegram/client');
+        const client = await getTelegramClient();
+        const entity = await (client as any).getEntity(fromId);
+        if (entity && active) {
+          const resolvedName = entity.title || `${entity.firstName || ''} ${entity.lastName || ''}`.trim() || 'Unknown';
+          cachePeer(fromId, {
+            id: fromId,
+            type: entity.className === 'User' ? 'user' : 'group',
+            inputEntity: entity,
+            name: resolvedName,
+          });
+          setName(resolvedName);
+        }
+      } catch {}
+    };
+
+    loadSender();
+    return () => { active = false; };
+  }, [fromId, fallback]);
+
+  if (!name) return <span style={{ opacity: 0.5 }}>Yuklanmoqda...</span>;
+  return <>{name}</>;
+}
+
 // ── MessageBubble ──────────────────────────────────────────
-function MessageBubble({ msg, chatId }: { msg: Message; chatId: string }) {
+function MessageBubble({
+  msg,
+  chatId,
+  peerType,
+}: {
+  msg: Message;
+  chatId: string;
+  peerType: 'user' | 'group' | 'channel';
+}) {
   const time = fmtTime(msg.date);
+  const isGroupOrChannel = peerType === 'group' || peerType === 'channel';
+  const showSenderName = isGroupOrChannel && !msg.isOutgoing;
 
   return (
     <div className={`message-row ${msg.isOutgoing ? 'out' : 'in'}`}>
       <div className="message-bubble">
+        {/* Sender Name (for group/channel incoming messages) */}
+        {showSenderName && (
+          <div style={{
+            fontWeight: 600,
+            fontSize: 12.5,
+            color: getSenderColor(msg.fromId || ''),
+            marginBottom: 4,
+            cursor: 'pointer',
+          }}>
+            <SenderName fromId={msg.fromId} fallback={msg.senderName} />
+          </div>
+        )}
+
         {/* Forwarded */}
         {msg.forwarded && (
           <div style={{
@@ -459,7 +576,7 @@ function MediaContent({
   const [err, setErr]   = useState(false);
   const [loading, setL] = useState(false);
 
-  const needDownload = media.type === 'photo' || media.type === 'video' || media.type === 'gif';
+  const needDownload = media.type === 'photo' || media.type === 'video' || media.type === 'gif' || media.type === 'sticker';
 
   useEffect(() => {
     if (!needDownload) return;
@@ -596,9 +713,23 @@ function MediaContent({
     </div>
   );
 
-  if (media.type === 'sticker') return (
-    <div style={{fontSize:48,lineHeight:1}}>🎭</div>
-  );
+  if (media.type === 'sticker') {
+    return (
+      <div style={{
+        maxWidth: 160,
+        maxHeight: 160,
+        minWidth: 60,
+        minHeight: url ? 0 : 80,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        {loading && <div className="spinner" style={{ margin: 20 }} />}
+        {url && <img src={url} alt="Sticker" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />}
+        {err && !loading && <span style={{ fontSize: 32 }}>🎭</span>}
+      </div>
+    );
+  }
 
   if (media.type === 'gif') return (
     <div style={{
