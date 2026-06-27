@@ -19,10 +19,10 @@ import {
 
 // Kiruvchi qo'ng'iroq ma'lumotlari
 export interface IncomingCallInfo {
-  callId: bigint;
-  accessHash: bigint;
-  adminId: bigint;          // Caller Telegram ID
-  participantId: bigint;    // Biz (Callee) Telegram ID
+  callId: string;
+  accessHash: string;
+  adminId: string;          // Caller Telegram ID
+  participantId: string;    // Biz (Callee) Telegram ID
   gAHash: Uint8Array;       // SHA-256(g_a) — privacy uchun
   isVideo: boolean;
   date: number;
@@ -61,10 +61,10 @@ export function setupCallListener(
     if (className === 'PhoneCallRequested') {
       // Telefon jiringlaydi
       const info: IncomingCallInfo = {
-        callId: BigInt(pc.id ?? 0),
-        accessHash: BigInt(pc.accessHash ?? 0),
-        adminId: BigInt(pc.adminId ?? 0),
-        participantId: BigInt(pc.participantId ?? 0),
+        callId: (pc.id ?? 0).toString(),
+        accessHash: (pc.accessHash ?? 0).toString(),
+        adminId: (pc.adminId ?? 0).toString(),
+        participantId: (pc.participantId ?? 0).toString(),
         gAHash: new Uint8Array(pc.gAHash ?? []),
         isVideo: pc.video ?? false,
         date: pc.date ?? Math.floor(Date.now() / 1000),
@@ -83,8 +83,8 @@ export function setupCallListener(
 
       try {
         const gB = new Uint8Array(pc.gB ?? []);
-        const callId = BigInt(pc.id ?? 0);
-        const callAccessHash = BigInt(pc.accessHash ?? 0);
+        const callId = (pc.id ?? 0).toString();
+        const callAccessHash = (pc.accessHash ?? 0).toString();
 
         const connections = await confirmPhoneCall(callId, callAccessHash, gB, activeCall.video);
         const updatedCall = getActiveCall();

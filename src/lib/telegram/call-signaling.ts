@@ -9,6 +9,7 @@
  */
 
 import { Buffer } from 'buffer';
+import bigInt from 'big-integer';
 import { getTelegramClient } from './client';
 import { getCachedEntity } from './peer-cache';
 import {
@@ -33,8 +34,8 @@ export interface PhoneConnection {
 }
 
 export interface ActiveCallState {
-  callId: bigint;
-  accessHash: bigint;
+  callId: string;
+  accessHash: string;
   dhConfig: DHConfig;
   callerKeys: CallerKeys | null;  // Caller uchun (a, gA, gAHash)
   authKey: Uint8Array | null;     // Hisoblangan E2E kalit
@@ -124,8 +125,8 @@ export async function requestPhoneCall(peerId: string, video = false): Promise<A
   const phoneCall = result?.phoneCall ?? result;
 
   _activeCall = {
-    callId: BigInt(phoneCall.id ?? 0),
-    accessHash: BigInt(phoneCall.accessHash ?? 0),
+    callId: (phoneCall.id ?? 0).toString(),
+    accessHash: (phoneCall.accessHash ?? 0).toString(),
     dhConfig,
     callerKeys,
     authKey: null,        // PhoneCallAccepted kelganda hisoblanadi
@@ -143,8 +144,8 @@ export async function requestPhoneCall(peerId: string, video = false): Promise<A
 // 2. CALLEE: phone.acceptCall — kiruvchi qo'ng'iroqni qabul qilish
 // ════════════════════════════════════════════════════════
 export async function acceptPhoneCall(
-  callId: bigint,
-  callAccessHash: bigint,
+  callId: string,
+  callAccessHash: string,
   gA: Uint8Array, // UpdatePhoneCall.PhoneCallRequested.gAHash dan EMAS, balki PhoneCallAccepted.gA dan
   video = false,
 ): Promise<ActiveCallState> {
@@ -166,8 +167,8 @@ export async function acceptPhoneCall(
   const result: any = await (client as any).invoke(
     new (Api as any).phone.AcceptCall({
       peer: new (Api as any).InputPhoneCall({
-        id: callId,
-        accessHash: callAccessHash,
+        id: bigInt(callId),
+        accessHash: bigInt(callAccessHash),
       }),
       gB: Buffer.from(calleeKeys.gB),
       protocol: await makeProtocol(Api, video),
@@ -197,8 +198,8 @@ export async function acceptPhoneCall(
 // 3. CALLER: phone.confirmCall — g_b kelganda tasdiqlash
 // ════════════════════════════════════════════════════════
 export async function confirmPhoneCall(
-  callId: bigint,
-  callAccessHash: bigint,
+  callId: string,
+  callAccessHash: string,
   gB: Uint8Array, // PhoneCallAccepted.g_b dan
   video = false,
 ): Promise<PhoneConnection[]> {
@@ -219,8 +220,8 @@ export async function confirmPhoneCall(
   const result: any = await (client as any).invoke(
     new (Api as any).phone.ConfirmCall({
       peer: new (Api as any).InputPhoneCall({
-        id: callId,
-        accessHash: callAccessHash,
+        id: bigInt(callId),
+        accessHash: bigInt(callAccessHash),
       }),
       gA: Buffer.from(_activeCall.callerKeys.gA), // Endi asl g_a yuboriladi
       keyFingerprint,
@@ -240,8 +241,8 @@ export async function confirmPhoneCall(
 // 4. phone.receivedCall — qo'ng'iroq qabul qilindimi bildirish
 // ════════════════════════════════════════════════════════
 export async function receivedPhoneCall(
-  callId: bigint,
-  callAccessHash: bigint,
+  callId: string,
+  callAccessHash: string,
 ): Promise<void> {
   const client = await getTelegramClient();
   const { Api } = await import('telegram');
@@ -250,8 +251,8 @@ export async function receivedPhoneCall(
     await (client as any).invoke(
       new (Api as any).phone.ReceivedCall({
         peer: new (Api as any).InputPhoneCall({
-          id: callId,
-          accessHash: callAccessHash,
+          id: bigInt(callId),
+          accessHash: bigInt(callAccessHash),
         }),
       })
     );
@@ -265,8 +266,8 @@ export async function receivedPhoneCall(
 // 5. phone.discardCall — qo'ng'iroqni rad etish / tugatish
 // ════════════════════════════════════════════════════════
 export async function discardPhoneCall(
-  callId: bigint,
-  callAccessHash: bigint,
+  callId: string,
+  callAccessHash: string,
   reason: 'hangup' | 'missed' | 'busy' | 'disconnect' = 'hangup',
   duration = 0,
 ): Promise<void> {
@@ -284,12 +285,12 @@ export async function discardPhoneCall(
     await (client as any).invoke(
       new (Api as any).phone.DiscardCall({
         peer: new (Api as any).InputPhoneCall({
-          id: callId,
-          accessHash: callAccessHash,
+          id: bigInt(callId),
+          accessHash: bigInt(callAccessHash),
         }),
         duration,
         reason: reasons[reason],
-        connectionId: 0n,
+        connectionId: bigInt(0),
       })
     );
     console.log('[VoIP] discardCall sent. reason:', reason);

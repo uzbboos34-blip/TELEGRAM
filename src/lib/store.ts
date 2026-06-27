@@ -15,14 +15,14 @@ interface ActiveCall {
 }
 
 export interface IncomingCall {
-  callId: bigint;         // Telegram call ID
-  accessHash: bigint;     // Telegram access hash
+  callId: string;         // Telegram call ID
+  accessHash: string;     // Telegram access hash
   peerId: string;         // Caller Telegram user ID (string)
   peerName: string;
   isVideo: boolean;
   gAHash: Uint8Array;     // SHA-256(g_a) — acceptCall uchun kerak
-  adminId: bigint;        // Caller ID (bigint)
-  participantId: bigint;  // Callee ID (bigint)
+  adminId: string;        // Caller ID
+  participantId: string;  // Callee ID
 }
 
 interface AppState {

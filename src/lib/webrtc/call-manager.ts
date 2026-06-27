@@ -89,8 +89,8 @@ export class PhoneCallManager {
 
   // ── Kiruvchi qo'ng'iroqni qabul qilish (Callee) ───────
   async acceptCall(
-    callId: bigint,
-    callAccessHash: bigint,
+    callId: string,
+    callAccessHash: string,
     gA: Uint8Array,
     video = false,
   ): Promise<void> {
@@ -189,7 +189,7 @@ export class PhoneCallManager {
   }
 
   // ── Kiruvchi qo'ng'iroqni rad etish ──────────────────
-  async rejectCall(callId: bigint, accessHash: bigint): Promise<void> {
+  async rejectCall(callId: string, accessHash: string): Promise<void> {
     await discardPhoneCall(callId, accessHash, 'missed');
     this.cleanup('missed');
   }
