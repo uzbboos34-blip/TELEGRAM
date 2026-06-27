@@ -139,8 +139,9 @@ function IncomingCallUI() {
 function ActiveCallUI() {
   const { activeCall, setActiveCall } = useAppStore();
   const [duration, setDuration] = useState(0);
-  const [connState, setConn] = useState<'connecting' | 'active' | 'failed'>('connecting');
+  const [connState, setConn] = useState<'ringing' | 'connecting' | 'active' | 'failed'>('ringing');
   const [muted, setMuted] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('Qo\'ng\'iroq qilinmoqda...');
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -149,24 +150,30 @@ function ActiveCallUI() {
     // Manager callbacklari
     phoneCallManager.onCallActive = () => {
       setConn('active');
+      setStatusMsg('');
       startTimer();
     };
 
-    phoneCallManager.onCallEnded = () => {
+    phoneCallManager.onCallEnded = (reason) => {
       stopTimer();
       setActiveCall(null);
     };
 
     phoneCallManager.onError = (err) => {
       console.error('[ActiveCallUI] Error:', err);
-      setConn('failed');
+      // Xato bo'lsa UI ni yopmaymiz — foydalanuvchi o'zi bekor qilsin
+      setStatusMsg('Ulanishda xato, qayta urinilmoqda...');
     };
 
     // Agar caller bo'lsa va idle bo'lsa — qo'ng'iroq boshlash
-    if (activeCall.status === 'calling' && phoneCallManager.state === 'idle') {
+    if (activeCall.status === 'calling') {
+      setConn('ringing');
+      setStatusMsg('Qo\'ng\'iroq qilinmoqda...');
       phoneCallManager.startCall(activeCall.peerId).catch(err => {
-        console.error('[ActiveCallUI] startCall error:', err);
-        setActiveCall(null);
+        // Oflayn bo'lsa ham xato chiqarmaydi — Telegram push yuboradi
+        console.warn('[ActiveCallUI] startCall error (peer may be offline):', err);
+        setStatusMsg('Javob kutilmoqda...');
+        setConn('ringing');
       });
     } else if (activeCall.status === 'active') {
       setConn('active');
@@ -207,10 +214,14 @@ function ActiveCallUI() {
   const color = getColor(activeCall.peerId);
   const peer = getCachedPeer(activeCall.peerId);
 
+  // Status ko'rsatish mantiqi
   const statusLabel =
     connState === 'active' ? fmtDur(duration)
     : connState === 'failed' ? 'Ulanmadi'
-    : peer?.isOnline ? 'Ulanilmoqda...' : 'Qo\'ng\'iroq qilinmoqda...';
+    : statusMsg || (peer?.isOnline ? 'Ulanilmoqda...' : 'Javob kutilmoqda...');
+
+  // Oflayn ogohlantirish faqat ringing holatda
+  const showOfflineWarning = connState === 'ringing' && !peer?.isOnline;
 
   return (
     <div style={{
@@ -224,15 +235,15 @@ function ActiveCallUI() {
         background: `radial-gradient(circle at 50% 28%, ${color}22 0%, transparent 60%)`,
       }} />
 
-      {/* Offline xabarnoması */}
-      {!peer?.isOnline && connState === 'connecting' && (
+      {/* Oflayn ogohlantirish */}
+      {showOfflineWarning && (
         <div style={{
           position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)',
-          background: 'rgba(255,152,0,.12)', border: '1px solid rgba(255,152,0,.3)',
-          color: '#FFB74D', padding: '8px 16px', borderRadius: 20, fontSize: 13, zIndex: 10,
-          whiteSpace: 'nowrap',
+          background: 'rgba(255,152,0,.15)', border: '1px solid rgba(255,152,0,.35)',
+          color: '#FFB74D', padding: '8px 18px', borderRadius: 20, fontSize: 13, zIndex: 10,
+          whiteSpace: 'nowrap', textAlign: 'center',
         }}>
-          ⚠️ Yaqiningiz oflayn. U ilovani ochishi kerak.
+          📵 Yaqiningiz oflayn — qo&apos;ng&apos;iroq ketmoqda...
         </div>
       )}
 
