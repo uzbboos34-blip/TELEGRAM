@@ -138,9 +138,10 @@ export async function sendVoiceMessage(
     catch { throw new Error('Peer topilmadi'); }
   }
 
+  const { Buffer } = await import('buffer');
   const arrayBuffer = await audioBlob.arrayBuffer();
-  const buffer = new Uint8Array(arrayBuffer);
-  const file = new CustomFile('voice.ogg', buffer.length, '', buffer as any);
+  const buffer = Buffer.from(arrayBuffer);
+  const file = new CustomFile('voice.ogg', buffer.length, '', buffer);
 
   await (client as any).sendFile(inputEntity, {
     file,
@@ -168,13 +169,14 @@ export async function sendFileMessage(
   const { getTelegramClient } = await import('./client');
   const { CustomFile }        = await import('telegram/client/uploads');
   const { resolveInputEntity } = await import('./messages');
+  const { Buffer }            = await import('buffer');
 
   const client = await getTelegramClient();
   const inputEntity = await resolveInputEntity(client, peerId, peerType);
   if (!inputEntity) throw new Error('Peer topilmadi');
 
-  const buffer = new Uint8Array(fileBuffer);
-  const file = new CustomFile(fileName, buffer.length, '', buffer as any);
+  const buffer = Buffer.from(fileBuffer);
+  const file = new CustomFile(fileName, buffer.length, '', buffer);
 
   await (client as any).sendFile(inputEntity, {
     file,

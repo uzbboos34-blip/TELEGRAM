@@ -123,13 +123,15 @@ export function setupCallListener(
   };
 
   // gramjs event handler
-  (getTelegramClient() as any).then((client: any) => {
-    client.addEventHandler(handler, {});
+  (getTelegramClient() as any).then(async (client: any) => {
+    const { Raw } = await import('telegram/events');
+    client.addEventHandler(handler, new Raw({}));
   });
 
   _removeListener = () => {
-    (getTelegramClient() as any).then((client: any) => {
-      client.removeEventHandler(handler, {});
+    (getTelegramClient() as any).then(async (client: any) => {
+      const { Raw } = await import('telegram/events');
+      client.removeEventHandler(handler, new Raw({}));
     });
     _listenerActive = false;
   };
