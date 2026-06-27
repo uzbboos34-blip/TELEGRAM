@@ -2,13 +2,10 @@
 
 import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { isAuthenticated, getCurrentUser } from '@/lib/telegram/auth';
+import { isAuthenticated } from '@/lib/telegram/auth';
 import { useAppStore } from '@/lib/store';
 import Sidebar from '@/components/chat/Sidebar';
 import CallScreen from '@/components/call/CallScreen';
-import { callManager } from '@/lib/webrtc/call-manager';
-import { type SignalPayload as CallSignal } from '@/lib/telegram/call-signaling';
-import { getCachedPeer } from '@/lib/telegram/peer-cache';
 
 export default function ChatsLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -22,7 +19,7 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
     }
   }, [router]);
 
-  // ── Telegram Update Listener — kiruvchi qo'ng'iroqlar ──
+  // ── Telegram Update Listener — xabarlar ──────────────
   useEffect(() => {
     if (listenerRef.current) return;
     listenerRef.current = true;
@@ -32,14 +29,7 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
     async function setupListener() {
       try {
         const { getTelegramClient } = await import('@/lib/telegram/client');
-        const { setupSignalHandler } = await import('@/lib/telegram/call-signaling');
         const client = await getTelegramClient();
-
-        // Phone API orqali signaling (UpdatePhoneCall)
-        setupSignalHandler((peerId, payload) => {
-          handleIncomingSignal(peerId, payload);
-        });
-
         const { Raw } = await import('telegram/events');
 
         const handler = async (update: any) => {
@@ -90,45 +80,9 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
         };
 
         client.addEventHandler(handler, new Raw({}));
-
-        removeHandler = () => {
-          client.removeEventHandler(handler, new Raw({}));
-        };
+        removeHandler = () => client.removeEventHandler(handler, new Raw({}));
       } catch (e) {
         console.warn('[Layout] Could not setup update listener:', e);
-      }
-    }
-
-    function handleIncomingSignal(peerId: string, signal: CallSignal) {
-      if (signal.type === 'offer') {
-        const state = useAppStore.getState();
-        if (state.activeCall || state.incomingCall) {
-          callManager.callId = signal.callId;
-          callManager.peerId = peerId;
-          callManager.peerType = 'user';
-          callManager.rejectCall();
-          return;
-        }
-
-        const cached = getCachedPeer(peerId);
-        const peerName = cached?.name || signal.callerName || "Noma'lum";
-        useAppStore.getState().setIncomingCall({
-          callId: signal.callId,
-          peerId,
-          peerName,
-          isVideo: signal.video || false,
-          signal,
-        });
-      } else if (signal.type === 'answer' || signal.type === 'ice') {
-        callManager.handleSignal(signal);
-        if (signal.type === 'answer') {
-          const current = useAppStore.getState().activeCall;
-          if (current) useAppStore.getState().setActiveCall({ ...current, status: 'active' });
-        }
-      } else if (signal.type === 'end' || signal.type === 'reject') {
-        callManager.handleSignal(signal);
-        useAppStore.getState().setIncomingCall(null);
-        useAppStore.getState().setActiveCall(null);
       }
     }
 

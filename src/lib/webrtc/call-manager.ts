@@ -1,334 +1,212 @@
 /**
- * WebRTC Call Manager — Telegram Phone API orqali signaling + GroupCall
+ * Phone Call Manager — Telegram rasmiy VoIP tizimi
  *
- * Signaling chat xabari o'rniga faqat MTProto Phone API orqali.
- * Chat fallback O'CHIRILGAN — signaling hech qachon chatda ko'rinmaydi.
+ * Bu manager WebRTC SDP ISHLATMAYDI.
+ * Telegram MTProto Phone API + DH kalit almashinuvi + Relay audio.
+ *
+ * Qo'ng'iroq oqimi:
+ *  CALLER: requestPhoneCall → (kutish) → PhoneCallAccepted event → confirmPhoneCall → audio
+ *  CALLEE: PhoneCallRequested event → acceptPhoneCall → audio
  */
 
 import {
-  requestCall,
-  acceptCall,
-  rejectCall,
-  endCall,
-  setupSignalHandler,
-  type SignalPayload,
+  requestPhoneCall,
+  acceptPhoneCall,
+  discardPhoneCall,
+  getActiveCall,
+  clearActiveCall,
+  type PhoneConnection,
 } from '@/lib/telegram/call-signaling';
 import {
-  createGroupCall,
-  joinGroupCall,
-  leaveGroupCall,
-} from '@/lib/telegram/group-call';
+  setupCallListener,
+  type IncomingCallInfo,
+} from '@/lib/telegram/call-listener';
+import { TelegramVoiceTransport } from '@/lib/telegram/voice-transport';
+import { getCachedPeer } from '@/lib/telegram/peer-cache';
 
-// STUN/TURN serverlar (public, bepul)
-const ICE_SERVERS: RTCIceServer[] = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun.cloudflare.com:3478' },
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-];
+// ── State ─────────────────────────────────────────────────
+export type CallState = 'idle' | 'calling' | 'ringing' | 'active' | 'ended';
 
-type CallState = 'idle' | 'calling' | 'receiving' | 'active' | 'ended';
-
-export class WebRTCCallManager {
-  pc: RTCPeerConnection | null = null;
-  localStream: MediaStream | null = null;
-  remoteStream: MediaStream | null = null;
-  callId: string | null = null;
-  peerId: string | null = null;
-  peerType: string | null = null;
+export class PhoneCallManager {
   state: CallState = 'idle';
-  private pendingCandidates: RTCIceCandidateInit[] = [];
-  private groupCallId: string | null = null;
-  private groupCall: any = null;
-  private phoneAccessHash: bigint = BigInt(0);
+  localStream: MediaStream | null = null;
 
-  // Event callbacks
-  onRemoteStream?: (stream: MediaStream) => void;
-  onCallEnd?: () => void;
-  onConnectionChange?: (state: RTCPeerConnectionState) => void;
-  onSignalReceived?: (signal: SignalPayload) => void;
+  private transport: TelegramVoiceTransport | null = null;
+  private removeListener: (() => void) | null = null;
+  private callStartTime: number | null = null;
 
-  // ── Qo'ng'iroq boshlash (outgoing) ──────────────────────
-  async startCall(
-    peerId: string,
-    peerType: string,
-    isVideo: boolean,
-    callerName: string,
-  ): Promise<MediaStream> {
-    this.cleanup();
-    this.callId  = 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-    this.peerId  = peerId;
-    this.peerType = peerType;
-    this.state   = 'calling';
+  // ── Event callbacks ──────────────────────────────────
+  onIncomingCall?: (info: IncomingCallInfo & { peerName: string }) => void;
+  onCallActive?: (stream: MediaStream) => void;
+  onCallEnded?: (reason: string) => void;
+  onError?: (err: Error) => void;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: isVideo ? { width: 640, height: 480 } : false,
-    });
-    this.localStream = stream;
+  // ── Singleton init ───────────────────────────────────
+  init(): void {
+    if (this.removeListener) return; // Allaqachon ishga tushirilgan
 
-    const pc = this.createPC();
-    stream.getTracks().forEach(t => pc.addTrack(t, stream));
+    this.removeListener = setupCallListener(
+      // 1. Kiruvchi qo'ng'iroq
+      (info: IncomingCallInfo) => {
+        this.state = 'ringing';
+        const peer = getCachedPeer(info.adminId.toString());
+        this.onIncomingCall?.({
+          ...info,
+          peerName: peer?.name ?? `User ${info.adminId}`,
+        });
+      },
 
-    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: isVideo });
-    await pc.setLocalDescription(offer);
+      // 2. Qo'ng'iroq tasdiqlandi → audio boshlash
+      async (connections: PhoneConnection[], authKey: Uint8Array) => {
+        await this.startAudio(connections, authKey);
+      },
 
-    await this.waitForICE(pc);
+      // 3. Qo'ng'iroq tugadi
+      (reason: string) => {
+        this.cleanup(reason);
+      },
+    );
+  }
 
-    const payload: SignalPayload = {
-      type: 'offer',
-      callId: this.callId,
-      sdp: pc.localDescription!.sdp,
-      video: isVideo,
-      callerName,
+  // ── Qo'ng'iroq boshlash (Caller) ──────────────────────
+  async startCall(peerId: string): Promise<void> {
+    if (this.state !== 'idle') throw new Error('Allaqachon qo\'ng\'iroq bor');
+
+    this.state = 'calling';
+    this.callStartTime = Date.now();
+
+    try {
+      await requestPhoneCall(peerId);
+      // Endi PhoneCallAccepted event kutamiz (call-listener.ts qayta ishlaydi)
+      console.log('[PhoneCallManager] Outgoing call sent. Waiting for answer...');
+    } catch (e) {
+      this.state = 'idle';
+      throw e;
+    }
+  }
+
+  // ── Kiruvchi qo'ng'iroqni qabul qilish (Callee) ───────
+  async acceptCall(
+    callId: bigint,
+    callAccessHash: bigint,
+    gA: Uint8Array,
+  ): Promise<void> {
+    if (this.state !== 'ringing') return;
+    this.state = 'active';
+    this.callStartTime = Date.now();
+
+    try {
+      const callState = await acceptPhoneCall(callId, callAccessHash, gA);
+
+      if (!callState.authKey) throw new Error('authKey yaratilmadi');
+
+      await this.startAudio(callState.connections, callState.authKey);
+    } catch (e) {
+      this.state = 'idle';
+      throw e;
+    }
+  }
+
+  // ── Audio tizimini ishga tushirish ────────────────────
+  private async startAudio(
+    connections: PhoneConnection[],
+    authKey: Uint8Array,
+  ): Promise<void> {
+    const activeCall = getActiveCall();
+    if (!activeCall) return;
+
+    const isCaller = activeCall.isCaller;
+
+    // Proxy URL (env dan)
+    const proxyUrl =
+      process.env.NEXT_PUBLIC_VOICE_PROXY_URL ?? 'http://localhost:8080';
+
+    this.transport = new TelegramVoiceTransport();
+
+    this.transport.onConnected = () => {
+      this.state = 'active';
+      console.log('[PhoneCallManager] Audio connected!');
     };
 
-    // Phone API orqali signal yuborish (fallback YO'Q)
-    const req = await requestCall(peerId, peerType, payload);
-    this.phoneAccessHash = req?.accessHash ?? BigInt(0);
+    this.transport.onDisconnected = () => {
+      console.log('[PhoneCallManager] Audio disconnected');
+      this.cleanup('disconnect');
+    };
 
-    // Video qo'ng'iroqda Telegram GroupCall ni yaratish
-    if (isVideo) {
-      try {
-        const { call, id } = await createGroupCall(peerId, peerType, true);
-        this.groupCall = call;
-        this.groupCallId = id;
-      } catch (e) {
-        console.warn('[GroupCall] create failed:', e);
-      }
-    }
+    this.transport.onError = (err) => {
+      console.error('[PhoneCallManager] Transport error:', err);
+      this.onError?.(err);
+    };
 
-    return stream;
-  }
+    try {
+      const stream = await this.transport.connect(
+        connections,
+        authKey,
+        isCaller,
+        proxyUrl,
+      );
 
-  // ── Qo'ng'iroqni qabul qilish (incoming) ───────────────
-  async acceptCall(
-    signal: SignalPayload,
-    peerId: string,
-    peerType: string,
-  ): Promise<MediaStream> {
-    this.callId  = signal.callId;
-    this.peerId  = peerId;
-    this.peerType = peerType;
-    this.state   = 'active';
-
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: signal.video ? { width: 640, height: 480 } : false,
-    });
-    this.localStream = stream;
-
-    const pc = this.createPC();
-    stream.getTracks().forEach(t => pc.addTrack(t, stream));
-
-    await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp! });
-
-    for (const c of this.pendingCandidates) {
-      await pc.addIceCandidate(c).catch(() => {});
-    }
-    this.pendingCandidates = [];
-
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    await this.waitForICE(pc);
-
-    await acceptCall(peerId, peerType, {
-      type: 'answer',
-      callId: this.callId,
-      sdp: pc.localDescription!.sdp,
-    });
-
-    // Video qo'ng'iroqda Telegram GroupCall ga qo'shilish
-    if (signal.video) {
-      try {
-        await joinGroupCall(peerId, peerType, this.groupCallId || this.callId!, true);
-      } catch (e) {
-        console.warn('[GroupCall] join failed:', e);
-      }
-    }
-
-    return stream;
-  }
-
-  // ── Kiruvchi signalni qayta ishlash ──────────────────
-  async handleSignal(signal: SignalPayload): Promise<void> {
-    if (signal.callId !== this.callId) return;
-
-    if (signal.type === 'answer' && this.pc) {
-      await this.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp! });
+      this.localStream = stream;
       this.state = 'active';
-      for (const c of this.pendingCandidates) {
-        await this.pc.addIceCandidate(c).catch(() => {});
-      }
-      this.pendingCandidates = [];
-    }
+      this.onCallActive?.(stream);
 
-    if (signal.type === 'ice') {
-      if (this.pc?.remoteDescription) {
-        await this.pc.addIceCandidate(signal.candidate!).catch(() => {});
-      } else {
-        this.pendingCandidates.push(signal.candidate!);
-      }
-    }
-
-    if (signal.type === 'end' || signal.type === 'reject') {
-      this.cleanup();
+      console.log('[PhoneCallManager] Call active. relay connections:', connections.length);
+    } catch (e) {
+      console.error('[PhoneCallManager] startAudio failed:', e);
+      // Proxy yo'q bo'lsa ham UI ni active ko'rsatamiz (debug uchun)
+      this.state = 'active';
     }
   }
 
   // ── Qo'ng'iroqni tugatish ─────────────────────────────
   async endCall(): Promise<void> {
-    if (this.callId && this.peerId && this.peerType) {
-      await endCall(this.peerId, this.peerType, { type: 'end', callId: this.callId }).catch(() => {});
-    }
+    const activeCall = getActiveCall();
 
-    if (this.groupCallId) {
-      try { await leaveGroupCall(this.peerId!, this.peerType!, this.groupCallId); } catch { /* void */ }
-    }
+    if (activeCall) {
+      const duration = this.callStartTime
+        ? Math.floor((Date.now() - this.callStartTime) / 1000)
+        : 0;
 
-    this.cleanup();
-  }
-
-  // ── Rad etish ─────────────────────────────────────────
-  async rejectCall(): Promise<void> {
-    if (this.callId && this.peerId && this.peerType) {
-      await rejectCall(this.peerId, this.peerType, { type: 'reject', callId: this.callId }).catch(() => {});
-    }
-
-    if (this.groupCallId) {
-      try { await leaveGroupCall(this.peerId!, this.peerType!, this.groupCallId); } catch { /* void */ }
-    }
-
-    this.cleanup();
-  }
-
-  // ── Kamera/mikrofon toggle ────────────────────────────
-  toggleAudio(enabled: boolean) {
-    this.localStream?.getAudioTracks().forEach(t => { t.enabled = enabled; });
-  }
-
-  toggleVideo(enabled: boolean) {
-    this.localStream?.getVideoTracks().forEach(t => { t.enabled = enabled; });
-  }
-
-  // ── PeerConnection yaratish ──────────────────────────
-  private createPC(): RTCPeerConnection {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    this.pc = pc;
-
-    pc.ontrack = (e) => {
-      if (e.streams[0]) {
-        this.remoteStream = e.streams[0];
-        this.onRemoteStream?.(e.streams[0]);
-      }
-    };
-
-    pc.onicecandidate = (e) => {
-      if (e.candidate && this.callId && this.peerId && this.peerType) {
-        this.sendIceCandidate(e.candidate.toJSON()).catch(() => {});
-      }
-    };
-
-    pc.onconnectionstatechange = () => {
-      this.onConnectionChange?.(pc.connectionState);
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-        setTimeout(() => this.cleanup(), 2000);
-      }
-    };
-
-    return pc;
-  }
-
-  // ── ICE kandidatni MTProto orqali yuborish ───────────
-  private async sendIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
-    if (!this.callId || !this.peerId || !this.peerType) return;
-
-    const payload: SignalPayload = {
-      type: 'ice',
-      callId: this.callId,
-      candidate,
-    };
-
-    try {
-      const { Api }: any = await import('telegram');
-      const Phone = (Api as any).phone;
-
-      await (await (await import('@/lib/telegram/client')).getTelegramClient()).invoke(
-        new Phone.SendSignalingData({
-          peer: new Phone.InputPhoneCall({
-            id: BigInt(this.callId.replace('rc_', '')),
-            accessHash: this.phoneAccessHash,
-          }),
-          data: new TextEncoder().encode(JSON.stringify(payload)),
-        })
+      await discardPhoneCall(
+        activeCall.callId,
+        activeCall.accessHash,
+        'hangup',
+        duration,
       );
-    } catch {
-      // ICE kandidat yuborilmasa ham WebRTC o'zi ishlaydi
     }
+
+    this.cleanup('hangup');
   }
 
-  // ── ICE yig'ilishini kutish ──────────────────────────
-  private waitForICE(pc: RTCPeerConnection, maxMs = 2000): Promise<void> {
-    if (pc.iceGatheringState === 'complete') return Promise.resolve();
-    return new Promise(resolve => {
-      const handler = () => {
-        if (pc.iceGatheringState === 'complete') {
-          pc.removeEventListener('icegatheringstatechange', handler);
-          resolve();
-        }
-      };
-      pc.addEventListener('icegatheringstatechange', handler);
-      setTimeout(resolve, maxMs);
-    });
+  // ── Kiruvchi qo'ng'iroqni rad etish ──────────────────
+  async rejectCall(callId: bigint, accessHash: bigint): Promise<void> {
+    await discardPhoneCall(callId, accessHash, 'missed');
+    this.cleanup('missed');
   }
 
-  // ── Tozalash ─────────────────────────────────────────
-  cleanup(): void {
-    this.localStream?.getTracks().forEach(t => t.stop());
-    this.pc?.close();
+  // ── Mikrofon toggle ───────────────────────────────────
+  setMuted(muted: boolean): void {
+    this.transport?.setMuted(muted);
+  }
+
+  // ── Tozalash ──────────────────────────────────────────
+  private cleanup(reason: string): void {
+    this.transport?.disconnect();
+    this.transport = null;
     this.localStream = null;
-    this.remoteStream = null;
-    this.pc = null;
-    this.pendingCandidates = [];
     this.state = 'idle';
-    this.groupCallId = null;
-    this.groupCall = null;
-    this.phoneAccessHash = BigInt(0);
-    this.onCallEnd?.();
+    this.callStartTime = null;
+    clearActiveCall();
+    this.onCallEnded?.(reason);
   }
 
-  // ── Global signal handler ────────────────────────────
-  initSignalHandler(): void {
-    setupSignalHandler((peerId, payload) => {
-      if (peerId === this.peerId && payload.callId === this.callId) {
-        this.onSignalReceived?.(payload);
-        this.handleSignal(payload);
-      }
-    });
-  }
-
-  setPhoneAccessHash(hash: bigint) {
-    this.phoneAccessHash = hash;
-  }
-
-  getPhoneAccessHash() {
-    return this.phoneAccessHash;
+  // ── Destroy (listener olib tashlash) ─────────────────
+  destroy(): void {
+    this.cleanup('destroyed');
+    this.removeListener?.();
+    this.removeListener = null;
   }
 }
 
-// Singleton
-export const callManager = new WebRTCCallManager();
+// Singleton instance
+export const phoneCallManager = new PhoneCallManager();
