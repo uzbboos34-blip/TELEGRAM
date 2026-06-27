@@ -60,6 +60,7 @@ jobs:
           NEXT_PUBLIC_TG_APP_ID: ${{ secrets.TG_APP_ID }}
           NEXT_PUBLIC_TG_APP_HASH: ${{ secrets.TG_APP_HASH }}
           NEXT_PUBLIC_WORKER_URL: ${{ secrets.WORKER_URL }}
+          NEXT_PUBLIC_VOICE_PROXY_URL: ${{ secrets.NEXT_PUBLIC_VOICE_PROXY_URL || 'https://telegram-voice-proxy.onrender.com' }}
           NEXT_PUBLIC_APP_NAME: Ross_messenger
           NODE_OPTIONS: '--max-old-space-size=4096'
 

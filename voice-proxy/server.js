@@ -143,6 +143,24 @@ wss.on('connection', (ws, req) => {
         pc.addTrack(remoteAudioTrack);
         pc.addTrack(remoteVideoTrack);
 
+        let audioRtpSeq = 0;
+        let audioRtpTs = 0;
+        const audioSsrc = 11111;
+
+        let videoRtpSeq = 0;
+        let videoRtpTs = 0;
+        const videoSsrc = 22222;
+
+        function wrapToRtp(payload, payloadType, seq, ts, ssrc) {
+          const rtpHeader = Buffer.alloc(12);
+          rtpHeader[0] = 0x80; // Version: 2, Padding/Extension/CSRC: 0
+          rtpHeader[1] = payloadType & 0x7F;
+          rtpHeader.writeUInt16BE(seq & 0xFFFF, 2);
+          rtpHeader.writeUInt32BE(ts, 4);
+          rtpHeader.writeUInt32BE(ssrc, 8);
+          return Buffer.concat([rtpHeader, payload]);
+        }
+
         udpSocket.on('message', (msg) => {
           if (msg.length < 20) return;
 
@@ -158,15 +176,16 @@ wss.on('connection', (ws, req) => {
           const decrypted = Buffer.concat([decipher.update(encryptedPayload), decipher.final()]);
 
           // werift tracklariga yozish (RTP formatida)
-          // Bu yerda werift o'zi shifrlangan RTPni DTLS orqali browserga uzatadi
-          // Biz decrypted Opus/VP8 payloadini RTC packet sifatida yuborishimiz mumkin:
-          // Audio yoki Videoligi paket analizidan aniqlanadi
           const isAudio = decrypted.length < 400; // Sodda audio/video heuristika
 
           if (isAudio) {
-            remoteAudioTrack.writeRtp(decrypted);
+            const rtpPacket = wrapToRtp(decrypted, 111, audioRtpSeq++, audioRtpTs, audioSsrc);
+            audioRtpTs += 960; // 20ms frame at 48kHz
+            remoteAudioTrack.writeRtp(rtpPacket);
           } else {
-            remoteVideoTrack.writeRtp(decrypted);
+            const rtpPacket = wrapToRtp(decrypted, 96, videoRtpSeq++, videoRtpTs, videoSsrc);
+            videoRtpTs += 3000; // 33ms frame at 90kHz
+            remoteVideoTrack.writeRtp(rtpPacket);
           }
         });
 
