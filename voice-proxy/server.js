@@ -1,147 +1,202 @@
 /**
- * Telegram Voice Proxy Server — Production Ready
+ * Telegram Voice & Video VoIP WebRTC-to-UDP Proxy Server
  *
- * Deploy: Render.com, Railway, Fly.io
+ * pure JavaScript (werift) WebRTC engine orqali:
+ * Next.js (WebRTC SDP/RTP) ⇄ Proxy (AES-CTR shifrlash) ⇄ Telegram UDP Relay
  *
- * Browser UDP yubora olmaydi.
- * Bu server WebSocket orqali kelgan audio paketlarni
- * Telegram Relay serverga UDP orqali yuboradi va aksincha.
- *
- * Ishga tushirish:
- *   node server.js
- *   PORT=8080 node server.js
+ * C++ native bindings talab qilmaydi.
  */
 
 const http = require('http');
 const WebSocket = require('ws');
 const dgram = require('dgram');
+const crypto = require('crypto');
+const {
+  RTCPeerConnection,
+  RTCRtpCodecParameters,
+  MediaStreamTrack,
+} = require('werift');
 
 const PORT = parseInt(process.env.PORT || '8080');
 
-// HTTP server — health check uchun (Render.com talab qiladi)
 const httpServer = http.createServer((req, res) => {
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', connections: wss.clients.size }));
     return;
   }
-  res.writeHead(404);
-  res.end('Not Found');
+  res.writeHead(404).end('Not Found');
 });
 
-// WebSocket server HTTP server ustida
-const wss = new WebSocket.Server({
-  server: httpServer,
-  verifyClient: ({ origin }) => {
-    // ALLOWED_ORIGIN env yo'q bo'lsa — hamma domendan qabul qilish
-    if (!process.env.ALLOWED_ORIGIN) return true;
-    const allowed = [
-      process.env.ALLOWED_ORIGIN,
-      'http://localhost:3000',
-      'https://localhost:3000',
-    ];
-    return allowed.some(o => origin && origin.startsWith(o));
-  },
-});
+const wss = new WebSocket.Server({ server: httpServer });
+console.log(`[VoiceProxy] WebSocket server started on port ${PORT}`);
 
-console.log('[VoiceProxy] Starting on port ' + PORT);
+// VoIP AES-256-CTR key derivation
+function deriveVoIPKeys(authKey, isCaller) {
+  const sha256 = (data) => crypto.createHash('sha256').update(data).digest();
+  
+  // Encrypt & Decrypt keys
+  const key1 = sha256(Buffer.concat([authKey, Buffer.from([isCaller ? 1 : 0])]));
+  const key2 = sha256(Buffer.concat([authKey, Buffer.from([isCaller ? 0 : 1])]));
+
+  return { encryptKey: key1, decryptKey: key2 };
+}
 
 wss.on('connection', (ws, req) => {
   const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  console.log('[VoiceProxy] New client: ' + clientIp);
+  console.log(`[VoiceProxy] Client connected: ${clientIp}`);
 
+  let pc = null;
   let udpSocket = null;
   let relayInfo = null;
-  let initialized = false;
+  let encryptKey = null;
+  let decryptKey = null;
+  let isCaller = false;
+  let seqNo = 0;
 
-  ws.on('message', (rawData, isBinary) => {
-    // ── Init xabari (JSON) ─────────────────────────────
-    if (!isBinary) {
-      try {
-        const msg = JSON.parse(rawData.toString());
+  ws.on('message', async (rawData) => {
+    try {
+      const msg = JSON.parse(rawData.toString());
 
-        if (msg.type === 'init' && !initialized) {
-          relayInfo = msg.relay; // { ip, port }
-          const peerTag = Buffer.from(msg.peerTag || new Array(16).fill(0));
+      // ── WebRTC Signaling: Client Offer ───────────────────
+      if (msg.type === 'offer') {
+        relayInfo = msg.relay; // { ip, port }
+        const peerTag = Buffer.from(msg.peerTag || new Array(16).fill(0));
+        const authKey = Buffer.from(msg.authKeyHex, 'hex');
+        isCaller = msg.isCaller;
 
-          console.log('[VoiceProxy] Relay: ' + relayInfo.ip + ':' + relayInfo.port);
+        // Kalitlarni generatsiya qilish
+        const keys = deriveVoIPKeys(authKey, isCaller);
+        encryptKey = keys.encryptKey;
+        decryptKey = keys.decryptKey;
 
-          // UDP socket yaratish
-          udpSocket = dgram.createSocket('udp4');
+        console.log(`[VoiceProxy] Setting up WebRTC PC to Relay: ${relayInfo.ip}:${relayInfo.port}`);
 
-          // Kelgan UDP paketlarni WS ga yuborish
-          udpSocket.on('message', (packet) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              ws.send(packet, { binary: true });
-            }
+        // UDP socket yaratish
+        udpSocket = dgram.createSocket('udp4');
+
+        // WebRTC Peer Connection (werift yordamida)
+        pc = new RTCPeerConnection({
+          codecs: {
+            audio: [
+              new RTCRtpCodecParameters({
+                mimeType: 'audio/opus',
+                clockRate: 48000,
+                channels: 2,
+              }),
+            ],
+            video: [
+              new RTCRtpCodecParameters({
+                mimeType: 'video/VP8',
+                clockRate: 90000,
+              }),
+            ],
+          },
+        });
+
+        // Audio & Video tracklarni qabul qilish
+        pc.ontrack = (event) => {
+          const track = event.track;
+          console.log(`[VoiceProxy] WebRTC track received: ${track.kind}`);
+
+          track.onReceiveRtp.subscribe((rtp) => {
+            // RTP payloadni olib shifrlash
+            const payload = rtp.payload;
+
+            // AES-256-CTR IV (seqNo orqali)
+            const iv = Buffer.alloc(16);
+            iv.writeUInt32BE(seqNo++, 0);
+
+            const cipher = crypto.createCipheriv('aes-256-ctr', encryptKey, iv);
+            const encrypted = Buffer.concat([cipher.update(payload), cipher.final()]);
+
+            // Telegram VoIP paketi (peerTag + seqNo + encryptedPayload)
+            const packetHeader = Buffer.alloc(20);
+            peerTag.copy(packetHeader, 0, 0, 16);
+            packetHeader.writeUInt32BE(seqNo, 16);
+
+            const packet = Buffer.concat([packetHeader, encrypted]);
+
+            udpSocket.send(packet, relayInfo.port, relayInfo.ip, (err) => {
+              if (err) console.warn('[VoiceProxy] UDP send error:', err.message);
+            });
           });
+        };
 
-          udpSocket.on('error', (err) => {
-            console.error('[VoiceProxy] UDP error:', err.message);
-          });
+        // Remote description (client offer) o'rnatish
+        await pc.setRemoteDescription(msg.sdp);
 
-          // Telegram relay ga dastlabki init paketi (peerTag bilan 64 bayt)
-          const initPacket = Buffer.alloc(64);
-          peerTag.copy(initPacket, 0, 0, Math.min(16, peerTag.length));
+        // Local answer yaratish
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
 
-          udpSocket.send(initPacket, relayInfo.port, relayInfo.ip, (err) => {
-            if (err) {
-              console.error('[VoiceProxy] Init packet error:', err.message);
-            } else {
-              console.log('[VoiceProxy] Init packet sent to relay');
-              // Tayyor ekanligini bildirish
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'ready' }));
-              }
-            }
-          });
+        // Clientga Answer yuborish
+        ws.send(JSON.stringify({
+          type: 'answer',
+          sdp: pc.localDescription,
+        }));
 
-          initialized = true;
-        }
-      } catch (e) {
-        console.warn('[VoiceProxy] Invalid message:', e.message);
+        // ── Telegram Relaydan kelgan paketlarni tinglash ──
+        const remoteAudioTrack = new MediaStreamTrack({ kind: 'audio' });
+        const remoteVideoTrack = new MediaStreamTrack({ kind: 'video' });
+        
+        pc.addTrack(remoteAudioTrack);
+        pc.addTrack(remoteVideoTrack);
+
+        udpSocket.on('message', (msg) => {
+          if (msg.length < 20) return;
+
+          // Header
+          const packetSeqNo = msg.readUInt32BE(16);
+          const encryptedPayload = msg.slice(20);
+
+          // Deshifrlash
+          const iv = Buffer.alloc(16);
+          iv.writeUInt32BE(packetSeqNo, 0);
+
+          const decipher = crypto.createDecipheriv('aes-256-ctr', decryptKey, iv);
+          const decrypted = Buffer.concat([decipher.update(encryptedPayload), decipher.final()]);
+
+          // werift tracklariga yozish (RTP formatida)
+          // Bu yerda werift o'zi shifrlangan RTPni DTLS orqali browserga uzatadi
+          // Biz decrypted Opus/VP8 payloadini RTC packet sifatida yuborishimiz mumkin:
+          // Audio yoki Videoligi paket analizidan aniqlanadi
+          const isAudio = decrypted.length < 400; // Sodda audio/video heuristika
+
+          if (isAudio) {
+            remoteAudioTrack.writeRtp(decrypted);
+          } else {
+            remoteVideoTrack.writeRtp(decrypted);
+          }
+        });
+
+        udpSocket.on('error', (err) => {
+          console.error('[VoiceProxy] UDP socket error:', err.message);
+        });
+
+        // Telegram relay ga ulanishni bildirish (init hello)
+        const initPacket = Buffer.alloc(64);
+        peerTag.copy(initPacket, 0, 0, Math.min(16, peerTag.length));
+        udpSocket.send(initPacket, relayInfo.port, relayInfo.ip);
       }
-      return;
-    }
-
-    // ── Binary audio ma'lumoti ─────────────────────────
-    if (initialized && udpSocket && relayInfo) {
-      udpSocket.send(rawData, relayInfo.port, relayInfo.ip, (err) => {
-        if (err) {
-          console.warn('[VoiceProxy] UDP send error:', err.message);
-        }
-      });
+    } catch (e) {
+      console.error('[VoiceProxy] Signaling error:', e.message);
     }
   });
 
   ws.on('close', () => {
-    console.log('[VoiceProxy] Client disconnected: ' + clientIp);
+    console.log(`[VoiceProxy] Client disconnected: ${clientIp}`);
+    if (pc) {
+      pc.close();
+      pc = null;
+    }
     if (udpSocket) {
-      try { udpSocket.close(); } catch (e) { /* ignore */ }
+      try { udpSocket.close(); } catch (e) {}
       udpSocket = null;
     }
-  });
-
-  ws.on('error', (err) => {
-    console.error('[VoiceProxy] WS error:', err.message);
   });
 });
 
 httpServer.listen(PORT, () => {
-  console.log('[VoiceProxy] HTTP + WebSocket server running on port ' + PORT);
-  console.log('[VoiceProxy] Health check: http://localhost:' + PORT + '/health');
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('[VoiceProxy] Shutting down...');
-  wss.close(() => {
-    httpServer.close(() => process.exit(0));
-  });
-});
-
-process.on('SIGINT', () => {
-  wss.close(() => {
-    httpServer.close(() => process.exit(0));
-  });
+  console.log(`[VoiceProxy] HTTP + WebRTC server running on port ${PORT}`);
 });

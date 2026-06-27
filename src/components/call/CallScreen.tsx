@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/lib/store';
 import { phoneCallManager } from '@/lib/webrtc/call-manager';
 import type { IncomingCallInfo } from '@/lib/telegram/call-listener';
@@ -21,10 +21,8 @@ function ini(name: string) {
 export default function CallScreen() {
   const { activeCall, incomingCall } = useAppStore();
 
-  // phoneCallManager ni init qilish (bir marta)
   useEffect(() => {
     phoneCallManager.init();
-    return () => { /* destroy faqat app yopilganda */ };
   }, []);
 
   if (incomingCall) return <IncomingCallUI />;
@@ -40,19 +38,18 @@ function IncomingCallUI() {
   if (!incomingCall) return null;
   const color = getColor(incomingCall.peerId);
 
-  // Qabul qilish
   async function accept() {
     if (!incomingCall) return;
     setAccepting(true);
     try {
-      // phoneCallManager.acceptCall — DH kalit almashinuvi va audio boshlaydi
       await phoneCallManager.acceptCall(
         incomingCall.callId,
         incomingCall.accessHash,
-        incomingCall.gAHash, // bu yerda gAHash beriladi; haqiqiy gA PhoneCallAccepted'da keladi
+        incomingCall.gAHash,
+        incomingCall.isVideo,
       );
 
-      phoneCallManager.onCallActive = (stream) => {
+      phoneCallManager.onCallActive = () => {
         setIncomingCall(null);
         setActiveCall({
           peerId: incomingCall.peerId,
@@ -62,7 +59,7 @@ function IncomingCallUI() {
         });
       };
 
-      phoneCallManager.onCallEnded = (reason) => {
+      phoneCallManager.onCallEnded = () => {
         setActiveCall(null);
         setIncomingCall(null);
       };
@@ -73,7 +70,6 @@ function IncomingCallUI() {
     }
   }
 
-  // Rad etish
   async function reject() {
     await phoneCallManager.rejectCall(incomingCall!.callId, incomingCall!.accessHash);
     setIncomingCall(null);
@@ -82,7 +78,7 @@ function IncomingCallUI() {
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1001,
-      background: 'rgba(0,0,0,.88)', backdropFilter: 'blur(24px)',
+      background: 'rgba(0,0,0,.92)', backdropFilter: 'blur(24px)',
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
     }}>
@@ -104,18 +100,11 @@ function IncomingCallUI() {
         {incomingCall.peerName}
       </h2>
       <p style={{ color: 'rgba(255,255,255,.45)', fontSize: 14, marginBottom: 52 }}>
-        Qo&apos;ng&apos;iroq qilyapti...
+        Kiruvchi qo&apos;ng&apos;iroq...
       </p>
 
       <div style={{ display: 'flex', gap: 48 }}>
-        {/* Rad etish */}
-        <CallButton
-          icon={<PhoneEndIcon />}
-          label="Rad etish"
-          color="#F44336"
-          onClick={reject}
-        />
-        {/* Qabul qilish */}
+        <CallButton icon={<PhoneEndIcon />} label="Rad etish" color="#F44336" onClick={reject} />
         <CallButton
           icon={accepting ? <Spinner /> : <PhoneIcon />}
           label="Qabul"
@@ -135,43 +124,56 @@ function IncomingCallUI() {
   );
 }
 
-// ── Faol qo'ng'iroq UI ────────────────────────────────────
+// ── Faol qo'ng'iroq UI (Video/Audio qo'llab-quvvatlaydi) ──
 function ActiveCallUI() {
   const { activeCall, setActiveCall } = useAppStore();
   const [duration, setDuration] = useState(0);
   const [connState, setConn] = useState<'ringing' | 'connecting' | 'active' | 'failed'>('ringing');
   const [muted, setMuted] = useState(false);
   const [statusMsg, setStatusMsg] = useState('Qo\'ng\'iroq qilinmoqda...');
+  
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const isVideo = activeCall?.type === 'video';
 
   useEffect(() => {
     if (!activeCall) return;
 
-    // Manager callbacklari
-    phoneCallManager.onCallActive = () => {
+    phoneCallManager.onCallActive = (stream) => {
       setConn('active');
       setStatusMsg('');
       startTimer();
+      
+      // Local streamni local video oynasiga ulash
+      if (isVideo && localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
     };
 
-    phoneCallManager.onCallEnded = (reason) => {
+    phoneCallManager.onRemoteStream = (stream) => {
+      // Masofaviy oqim kelganda uni remote video oynasiga ulash
+      if (isVideo && remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+      }
+    };
+
+    phoneCallManager.onCallEnded = () => {
       stopTimer();
       setActiveCall(null);
     };
 
     phoneCallManager.onError = (err) => {
       console.error('[ActiveCallUI] Error:', err);
-      // Xato bo'lsa UI ni yopmaymiz — foydalanuvchi o'zi bekor qilsin
-      setStatusMsg('Ulanishda xato, qayta urinilmoqda...');
+      setStatusMsg('Ulanish xatosi...');
     };
 
-    // Agar caller bo'lsa va idle bo'lsa — qo'ng'iroq boshlash
     if (activeCall.status === 'calling') {
       setConn('ringing');
       setStatusMsg('Qo\'ng\'iroq qilinmoqda...');
-      phoneCallManager.startCall(activeCall.peerId).catch(err => {
-        // Oflayn bo'lsa ham xato chiqarmaydi — Telegram push yuboradi
-        console.warn('[ActiveCallUI] startCall error (peer may be offline):', err);
+      phoneCallManager.startCall(activeCall.peerId, isVideo).catch(err => {
+        console.warn('[ActiveCallUI] startCall error:', err);
         setStatusMsg('Javob kutilmoqda...');
         setConn('ringing');
       });
@@ -214,26 +216,55 @@ function ActiveCallUI() {
   const color = getColor(activeCall.peerId);
   const peer = getCachedPeer(activeCall.peerId);
 
-  // Status ko'rsatish mantiqi
   const statusLabel =
     connState === 'active' ? fmtDur(duration)
     : connState === 'failed' ? 'Ulanmadi'
     : statusMsg || (peer?.isOnline ? 'Ulanilmoqda...' : 'Javob kutilmoqda...');
 
-  // Oflayn ogohlantirish faqat ringing holatda
   const showOfflineWarning = connState === 'ringing' && !peer?.isOnline;
 
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 1000,
-      background: '#17212B',
+      background: '#121212',
       display: 'flex', flexDirection: 'column',
     }}>
-      {/* Gradient bg */}
-      <div style={{
-        position: 'absolute', inset: 0, pointerEvents: 'none',
-        background: `radial-gradient(circle at 50% 28%, ${color}22 0%, transparent 60%)`,
-      }} />
+      {/* 1. Video Oqim Elementlari */}
+      {isVideo && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 1, background: '#000' }}>
+          {/* Remote Video (To'liq ekran) */}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+
+          {/* Local Video (Kichik suzuvchi oyna) */}
+          <video
+            ref={localVideoRef}
+            autoPlay
+            playsInline
+            muted
+            style={{
+              position: 'absolute', top: 80, right: 20,
+              width: 120, height: 160, borderRadius: 12,
+              border: '2px solid rgba(255,255,255,.3)',
+              boxShadow: '0 4px 12px rgba(0,0,0,.5)',
+              objectFit: 'cover',
+              zIndex: 3,
+            }}
+          />
+        </div>
+      )}
+
+      {/* Background Gradient (Faqat ovozli qo'ng'iroqda) */}
+      {!isVideo && (
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          background: `radial-gradient(circle at 50% 28%, ${color}22 0%, transparent 60%)`,
+        }} />
+      )}
 
       {/* Oflayn ogohlantirish */}
       {showOfflineWarning && (
@@ -247,17 +278,17 @@ function ActiveCallUI() {
         </div>
       )}
 
-      {/* Top */}
+      {/* Top Bar Info */}
       <div style={{ position: 'relative', zIndex: 2, textAlign: 'center', padding: '52px 24px 0' }}>
-        <p style={{ fontSize: 11, letterSpacing: 2, color: 'rgba(255,255,255,.4)', marginBottom: 8, textTransform: 'uppercase' }}>
-          📞 Ovozli qo&apos;ng&apos;iroq
+        <p style={{ fontSize: 11, letterSpacing: 2, color: 'rgba(255,255,255,.5)', marginBottom: 8, textTransform: 'uppercase' }}>
+          {isVideo ? '📹 Video qo\'ng\'iroq' : '📞 Ovozli qo\'ng\'iroq'}
         </p>
         <h1 style={{ fontSize: 28, fontWeight: 700, color: '#fff', marginBottom: 8 }}>
           {activeCall.peerName}
         </h1>
         <div style={{
           fontSize: 15, minHeight: 22,
-          color: connState === 'active' ? '#4CAF50' : 'rgba(255,255,255,.5)',
+          color: connState === 'active' ? '#4CAF50' : 'rgba(255,255,255,.6)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
         }}>
           {connState === 'active' && (
@@ -271,21 +302,25 @@ function ActiveCallUI() {
         </div>
       </div>
 
-      {/* Avatar */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
-        <div style={{
-          width: 128, height: 128, borderRadius: '50%',
-          background: color, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 48, fontWeight: 700, color: '#fff',
-          animation: connState !== 'active' ? 'callRing 2s ease-in-out infinite' : 'none',
-          boxShadow: connState === 'active' ? `0 0 28px ${color}44` : 'none',
-          transition: 'box-shadow 0.5s',
-        }}>
-          {ini(activeCall.peerName)}
+      {/* Avatar (Faqat ovozli yoki video ulanishidan oldin) */}
+      {(!isVideo || connState !== 'active') && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', zIndex: 2 }}>
+          <div style={{
+            width: 128, height: 128, borderRadius: '50%',
+            background: color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 48, fontWeight: 700, color: '#fff',
+            animation: connState !== 'active' ? 'callRing 2s ease-in-out infinite' : 'none',
+            boxShadow: connState === 'active' ? `0 0 28px ${color}44` : 'none',
+            transition: 'box-shadow 0.5s',
+          }}>
+            {ini(activeCall.peerName)}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Controls */}
+      {isVideo && connState === 'active' && <div style={{ flex: 1 }} />}
+
+      {/* Control Buttons */}
       <div style={{ position: 'relative', zIndex: 2, padding: '0 20px 52px' }}>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginBottom: 28 }}>
           <CtrlBtn
@@ -299,13 +334,7 @@ function ActiveCallUI() {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <CallButton
-            icon={<PhoneEndIcon />}
-            label=""
-            color="#F44336"
-            size={72}
-            onClick={endCall}
-          />
+          <CallButton icon={<PhoneEndIcon />} label="" color="#F44336" size={72} onClick={endCall} />
         </div>
       </div>
 
@@ -319,7 +348,7 @@ function ActiveCallUI() {
   );
 }
 
-// ── Kichik UI komponentlari ───────────────────────────────
+// ── Kichik UI elementlari ───────────────────────────────
 function CallButton({
   icon, label, color, size = 68, onClick, disabled,
 }: {

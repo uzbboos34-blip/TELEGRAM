@@ -39,6 +39,7 @@ export interface ActiveCallState {
   authKey: Uint8Array | null;     // Hisoblangan E2E kalit
   connections: PhoneConnection[]; // Telegram relay serverlari
   isCaller: boolean;
+  video: boolean;                 // Video qo'ng'iroqmi yoki yo'q
   startTime: number;
 }
 
@@ -73,12 +74,12 @@ function parseConnections(raw: any[]): PhoneConnection[] {
 }
 
 // ── PhoneCallProtocol objecti ────────────────────────────
-async function makeProtocol(Api: any) {
-  return new Api.phone.PhoneCallProtocol({
+async function makeProtocol(Api: any, video = false) {
+  return new Api.PhoneCallProtocol({
     udpP2p: true,
     udpReflector: true,
-    minLayer: 92,
-    maxLayer: 92,
+    minLayer: video ? 114 : 92, // Video uchun min 114 layer kerak
+    maxLayer: video ? 120 : 92,
     libraryVersions: ['5.0.0'],
   });
 }
@@ -86,7 +87,7 @@ async function makeProtocol(Api: any) {
 // ════════════════════════════════════════════════════════
 // 1. CALLER: phone.requestCall — qo'ng'iroq boshlash
 // ════════════════════════════════════════════════════════
-export async function requestPhoneCall(peerId: string): Promise<ActiveCallState> {
+export async function requestPhoneCall(peerId: string, video = false): Promise<ActiveCallState> {
   const client = await getTelegramClient();
   const { Api } = await import('telegram');
 
@@ -108,8 +109,8 @@ export async function requestPhoneCall(peerId: string): Promise<ActiveCallState>
       userId: inputEntity,
       randomId: Math.floor(Math.random() * 0x7fffffff),
       gAHash: callerKeys.gAHash,
-      protocol: await makeProtocol(Api),
-      video: false,
+      protocol: await makeProtocol(Api, video),
+      video: video,
     })
   );
 
@@ -123,10 +124,11 @@ export async function requestPhoneCall(peerId: string): Promise<ActiveCallState>
     authKey: null,        // PhoneCallAccepted kelganda hisoblanadi
     connections: [],      // PhoneCall confirmed kelganda to'ldiriladi
     isCaller: true,
+    video: video,
     startTime: Date.now(),
   };
 
-  console.log('[VoIP] requestCall sent. callId:', _activeCall.callId);
+  console.log('[VoIP] requestCall sent. callId:', _activeCall.callId, 'video:', video);
   return _activeCall;
 }
 
@@ -137,6 +139,7 @@ export async function acceptPhoneCall(
   callId: bigint,
   callAccessHash: bigint,
   gA: Uint8Array, // UpdatePhoneCall.PhoneCallRequested.gAHash dan EMAS, balki PhoneCallAccepted.gA dan
+  video = false,
 ): Promise<ActiveCallState> {
   const client = await getTelegramClient();
   const { Api } = await import('telegram');
@@ -160,7 +163,7 @@ export async function acceptPhoneCall(
         accessHash: callAccessHash,
       }),
       gB: calleeKeys.gB,
-      protocol: await makeProtocol(Api),
+      protocol: await makeProtocol(Api, video),
     })
   );
 
@@ -175,10 +178,11 @@ export async function acceptPhoneCall(
     authKey: calleeKeys.authKey,  // Callee authKey ni hisobladi
     connections,
     isCaller: false,
+    video: video,
     startTime: Date.now(),
   };
 
-  console.log('[VoIP] acceptCall sent. connections:', connections.length);
+  console.log('[VoIP] acceptCall sent. connections:', connections.length, 'video:', video);
   return _activeCall;
 }
 
@@ -189,6 +193,7 @@ export async function confirmPhoneCall(
   callId: bigint,
   callAccessHash: bigint,
   gB: Uint8Array, // PhoneCallAccepted.g_b dan
+  video = false,
 ): Promise<PhoneConnection[]> {
   if (!_activeCall) throw new Error('No active call state');
   if (!_activeCall.callerKeys) throw new Error('No caller keys');
@@ -212,7 +217,7 @@ export async function confirmPhoneCall(
       }),
       gA: _activeCall.callerKeys.gA, // Endi asl g_a yuboriladi
       keyFingerprint,
-      protocol: await makeProtocol(Api),
+      protocol: await makeProtocol(Api, video),
     })
   );
 
@@ -220,7 +225,7 @@ export async function confirmPhoneCall(
   const connections = parseConnections(phoneCall?.connections ?? []);
   _activeCall.connections = connections;
 
-  console.log('[VoIP] confirmCall sent. authKey ready, connections:', connections.length);
+  console.log('[VoIP] confirmCall sent. authKey ready, connections:', connections.length, 'video:', video);
   return connections;
 }
 

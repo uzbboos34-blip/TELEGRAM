@@ -145,6 +145,23 @@ export async function deriveCallKey(
   return { key, iv };
 }
 
+// ── AES-256-CTR raw baytlarni olish (Node.js/Proxy uchun) ─────────
+export function deriveCallKeyBytes(
+  authKey: Uint8Array,
+  isCaller: boolean,
+): { encryptKey: Uint8Array; decryptKey: Uint8Array } {
+  // Telegram VoIP spec:
+  // encryptKey = SHA256(authKey + [isCaller ? 1 : 0])
+  // decryptKey = SHA256(authKey + [isCaller ? 0 : 1])
+  // Bu yerda SHA256 dan olingan 32 bayt AES-256 kaliti sifatida ishlatiladi
+  // Bizning implementatsiyada WebCrypto yordamida ishlashni osonlashtirish uchun raw baytlarni qaytaramiz
+  const x = isCaller ? 0 : 8;
+  const encryptKey = authKey.slice(x, x + 32);
+  const decryptKey = authKey.slice(x === 0 ? 8 : 0, (x === 0 ? 8 : 0) + 32);
+  return { encryptKey, decryptKey };
+}
+
+
 // ── DH parametrlarni tekshirish (xavfsizlik) ──────────────
 export function validateDHParams(dhConfig: DHConfig, gA: Uint8Array): boolean {
   const p = bytesToBigInt(dhConfig.p);

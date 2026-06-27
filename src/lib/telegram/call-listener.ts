@@ -86,7 +86,7 @@ export function setupCallListener(
         const callId = BigInt(pc.id ?? 0);
         const callAccessHash = BigInt(pc.accessHash ?? 0);
 
-        const connections = await confirmPhoneCall(callId, callAccessHash, gB);
+        const connections = await confirmPhoneCall(callId, callAccessHash, gB, activeCall.video);
         const updatedCall = getActiveCall();
 
         if (updatedCall?.authKey) {

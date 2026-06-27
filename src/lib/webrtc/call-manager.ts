@@ -38,6 +38,7 @@ export class PhoneCallManager {
   // ── Event callbacks ──────────────────────────────────
   onIncomingCall?: (info: IncomingCallInfo & { peerName: string }) => void;
   onCallActive?: (stream: MediaStream) => void;
+  onRemoteStream?: (stream: MediaStream) => void;
   onCallEnded?: (reason: string) => void;
   onError?: (err: Error) => void;
 
@@ -56,9 +57,10 @@ export class PhoneCallManager {
         });
       },
 
-      // 2. Qo'ng'iroq tasdiqlandi → audio boshlash
+      // 2. Qo'ng'iroq tasdiqlandi → audio/video boshlash
       async (connections: PhoneConnection[], authKey: Uint8Array) => {
-        await this.startAudio(connections, authKey);
+        const activeCall = getActiveCall();
+        await this.startAudio(connections, authKey, activeCall?.video ?? false);
       },
 
       // 3. Qo'ng'iroq tugadi
@@ -69,14 +71,14 @@ export class PhoneCallManager {
   }
 
   // ── Qo'ng'iroq boshlash (Caller) ──────────────────────
-  async startCall(peerId: string): Promise<void> {
+  async startCall(peerId: string, video = false): Promise<void> {
     if (this.state !== 'idle') throw new Error('Allaqachon qo\'ng\'iroq bor');
 
     this.state = 'calling';
     this.callStartTime = Date.now();
 
     try {
-      await requestPhoneCall(peerId);
+      await requestPhoneCall(peerId, video);
       // Endi PhoneCallAccepted event kutamiz (call-listener.ts qayta ishlaydi)
       console.log('[PhoneCallManager] Outgoing call sent. Waiting for answer...');
     } catch (e) {
@@ -90,27 +92,29 @@ export class PhoneCallManager {
     callId: bigint,
     callAccessHash: bigint,
     gA: Uint8Array,
+    video = false,
   ): Promise<void> {
     if (this.state !== 'ringing') return;
     this.state = 'active';
     this.callStartTime = Date.now();
 
     try {
-      const callState = await acceptPhoneCall(callId, callAccessHash, gA);
+      const callState = await acceptPhoneCall(callId, callAccessHash, gA, video);
 
       if (!callState.authKey) throw new Error('authKey yaratilmadi');
 
-      await this.startAudio(callState.connections, callState.authKey);
+      await this.startAudio(callState.connections, callState.authKey, video);
     } catch (e) {
       this.state = 'idle';
       throw e;
     }
   }
 
-  // ── Audio tizimini ishga tushirish ────────────────────
+  // ── Audio/Video oqimini ishga tushirish ───────────────
   private async startAudio(
     connections: PhoneConnection[],
     authKey: Uint8Array,
+    video = false,
   ): Promise<void> {
     const activeCall = getActiveCall();
     if (!activeCall) return;
@@ -125,12 +129,17 @@ export class PhoneCallManager {
 
     this.transport.onConnected = () => {
       this.state = 'active';
-      console.log('[PhoneCallManager] Audio connected!');
+      console.log('[PhoneCallManager] WebRTC connected!');
     };
 
     this.transport.onDisconnected = () => {
-      console.log('[PhoneCallManager] Audio disconnected');
+      console.log('[PhoneCallManager] WebRTC disconnected');
       this.cleanup('disconnect');
+    };
+
+    this.transport.onRemoteStream = (stream) => {
+      console.log('[PhoneCallManager] Remote stream received');
+      this.onRemoteStream?.(stream);
     };
 
     this.transport.onError = (err) => {
@@ -144,13 +153,14 @@ export class PhoneCallManager {
         authKey,
         isCaller,
         proxyUrl,
+        video,
       );
 
       this.localStream = stream;
       this.state = 'active';
       this.onCallActive?.(stream);
 
-      console.log('[PhoneCallManager] Call active. relay connections:', connections.length);
+      console.log('[PhoneCallManager] Call active. connections:', connections.length, 'video:', video);
     } catch (e) {
       console.error('[PhoneCallManager] startAudio failed:', e);
       // Proxy yo'q bo'lsa ham UI ni active ko'rsatamiz (debug uchun)
