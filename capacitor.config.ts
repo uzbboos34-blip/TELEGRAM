@@ -1,7 +1,7 @@
 import { CapacitorConfig } from '@capacitor/cli';
 
 // Production: Vercel URL | Local dev (emulator only): http://10.0.2.2:3000
-const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || 'https://ross-messenger.vercel.app';
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || 'https://telegram-mu-kohl.vercel.app';
 
 const config: CapacitorConfig = {
   appId: 'com.ross.messenger',
