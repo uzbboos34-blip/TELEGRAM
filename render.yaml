@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: telegram-voice-proxy
+    env: node
+    region: frankfurt  # Yevropa — Telegram serverlariga yaqin
+    plan: free
+    rootDir: voice-proxy
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000  # Render default port

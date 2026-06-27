@@ -75,14 +75,20 @@ export class TelegramVoiceTransport {
     return this.localStream;
   }
 
-  // ── WebSocket → UDP proxy ─────────────────────────────
+  // ── WebSocket → UDP proxy ───────────────────────────
   private connectWebSocket(
     relay: PhoneConnection,
     proxyUrl: string,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = proxyUrl.replace(/\/$/, '') + '/call';
-      this.ws = new WebSocket(url);
+      // http/https → ws/wss ga o'tkazish (Render.com WSS ishlatadi)
+      const wsUrl = proxyUrl
+        .replace(/^http:\/\//, 'ws://')
+        .replace(/^https:\/\//, 'wss://')
+        .replace(/\/$/, '') + '/call';
+
+      console.log('[VoiceTransport] Connecting to proxy:', wsUrl);
+      this.ws = new WebSocket(wsUrl);
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
@@ -95,22 +101,32 @@ export class TelegramVoiceTransport {
           },
           peerTag: Array.from(relay.peerTag),
         }));
-        this.isConnected = true;
-        this.onConnected?.();
-        resolve();
+        // ready event kelguncha kutamiz
       };
 
       this.ws.onmessage = (event) => {
-        // Kelgan audio paket
+        // Proxy'dan 'ready' xabari
+        if (typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'ready') {
+              this.isConnected = true;
+              this.onConnected?.();
+              resolve();
+            }
+          } catch { /* ignore */ }
+          return;
+        }
+        // Kelgan audio paket (binary)
         if (event.data instanceof ArrayBuffer) {
           this.handleIncomingAudio(event.data).catch(console.warn);
         }
       };
 
-      this.ws.onerror = (e) => {
-        const err = new Error('WebSocket xatosi');
+      this.ws.onerror = () => {
+        const err = new Error('Voice proxy WebSocket ulanmadi');
         this.onError?.(err);
-        reject(err);
+        if (!this.isConnected) reject(err);
       };
 
       this.ws.onclose = () => {
@@ -118,10 +134,12 @@ export class TelegramVoiceTransport {
         this.onDisconnected?.();
       };
 
-      // 5 soniya timeout
+      // 8 soniya timeout
       setTimeout(() => {
-        if (!this.isConnected) reject(new Error('WebSocket timeout'));
-      }, 5000);
+        if (!this.isConnected) {
+          reject(new Error('Voice proxy timeout (8s)'));
+        }
+      }, 8000);
     });
   }
 
