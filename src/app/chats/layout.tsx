@@ -6,6 +6,7 @@ import { isAuthenticated } from '@/lib/telegram/auth';
 import { useAppStore } from '@/lib/store';
 import Sidebar from '@/components/chat/Sidebar';
 import CallScreen from '@/components/call/CallScreen';
+import { phoneCallManager } from '@/lib/webrtc/call-manager';
 
 export default function ChatsLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -17,7 +18,42 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
       router.replace('/login');
       return;
     }
-  }, [router]);
+
+    // ── VoIP Update Listener (Background) ─────────────────
+    phoneCallManager.init();
+
+    phoneCallManager.onIncomingCall = (info) => {
+      setIncomingCall({
+        callId: info.callId,
+        accessHash: info.accessHash,
+        peerId: info.adminId.toString(),
+        peerName: info.peerName,
+        gAHash: info.gAHash,
+        isVideo: info.isVideo,
+        adminId: info.adminId,
+        participantId: info.participantId,
+      });
+    };
+
+    phoneCallManager.onCallActive = (stream) => {
+      const currentCall = useAppStore.getState().activeCall;
+      if (currentCall) {
+        setActiveCall({
+          ...currentCall,
+          status: 'active',
+        });
+      }
+    };
+
+    phoneCallManager.onCallEnded = () => {
+      setActiveCall(null);
+      setIncomingCall(null);
+    };
+
+    return () => {
+      phoneCallManager.destroy();
+    };
+  }, [router, setIncomingCall, setActiveCall]);
 
   // ── Telegram Update Listener — xabarlar ──────────────
   useEffect(() => {
