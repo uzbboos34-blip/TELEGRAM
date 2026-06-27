@@ -1,11 +1,8 @@
 /**
  * WebRTC Call Manager — Telegram Phone API orqali signaling + GroupCall
  *
- * Yangilanish:
- *  1. Signaling chat xabari o'rniga phone.requestCall/acceptCall API orqali
- *  2. ICE/sdp kandidatlar Telegram serveriga MTProto orqali
- *  3. Chatda ko'rinmaydi, "📞RC:" prefiksli xabarlar chiqmaydi
- *  4. Video qo'ng'iroqda Telegram GroupCall API create/join/leave ishlatiladi
+ * Signaling chat xabari o'rniga faqat MTProto Phone API orqali.
+ * Chat fallback O'CHIRILGAN — signaling hech qachon chatda ko'rinmaydi.
  */
 
 import {
@@ -21,8 +18,6 @@ import {
   joinGroupCall,
   leaveGroupCall,
 } from '@/lib/telegram/group-call';
-
-const CALL_PREFIX = '📞RC:';
 
 // STUN/TURN serverlar (public, bepul)
 const ICE_SERVERS: RTCIceServer[] = [
@@ -59,6 +54,7 @@ export class WebRTCCallManager {
   private pendingCandidates: RTCIceCandidateInit[] = [];
   private groupCallId: string | null = null;
   private groupCall: any = null;
+  private phoneAccessHash: bigint = BigInt(0);
 
   // Event callbacks
   onRemoteStream?: (stream: MediaStream) => void;
@@ -101,8 +97,9 @@ export class WebRTCCallManager {
       callerName,
     };
 
-    // Phone API orqali yuborish, ishlamasa fallback chat
-    await this.sendOfferFallback(peerId, peerType, payload);
+    // Phone API orqali signal yuborish (fallback YO'Q)
+    const req = await requestCall(peerId, peerType, payload);
+    this.phoneAccessHash = req?.accessHash ?? BigInt(0);
 
     // Video qo'ng'iroqda Telegram GroupCall ni yaratish
     if (isVideo) {
@@ -153,11 +150,7 @@ export class WebRTCCallManager {
       type: 'answer',
       callId: this.callId,
       sdp: pc.localDescription!.sdp,
-    }).catch(() => this.sendChatFallback(peerId, peerType, {
-      type: 'answer',
-      callId: this.callId,
-      sdp: pc.localDescription!.sdp,
-    }));
+    });
 
     // Video qo'ng'iroqda Telegram GroupCall ga qo'shilish
     if (signal.video) {
@@ -200,10 +193,9 @@ export class WebRTCCallManager {
   // ── Qo'ng'iroqni tugatish ─────────────────────────────
   async endCall(): Promise<void> {
     if (this.callId && this.peerId && this.peerType) {
-      await endCall(this.peerId, this.peerType, { type: 'end', callId: this.callId }).catch(() => this.sendChatFallback(this.peerId!, this.peerType!, { type: 'end', callId: this.callId }));
+      await endCall(this.peerId, this.peerType, { type: 'end', callId: this.callId }).catch(() => {});
     }
 
-    // GroupCall dan chiqish
     if (this.groupCallId) {
       try { await leaveGroupCall(this.peerId!, this.peerType!, this.groupCallId); } catch { /* void */ }
     }
@@ -214,7 +206,7 @@ export class WebRTCCallManager {
   // ── Rad etish ─────────────────────────────────────────
   async rejectCall(): Promise<void> {
     if (this.callId && this.peerId && this.peerType) {
-      await rejectCall(this.peerId, this.peerType, { type: 'reject', callId: this.callId }).catch(() => this.sendChatFallback(this.peerId!, this.peerType!, { type: 'reject', callId: this.callId }));
+      await rejectCall(this.peerId, this.peerType, { type: 'reject', callId: this.callId }).catch(() => {});
     }
 
     if (this.groupCallId) {
@@ -272,15 +264,14 @@ export class WebRTCCallManager {
     };
 
     try {
-      const client = await (await import('@/lib/telegram/client')).getTelegramClient();
       const { Api }: any = await import('telegram');
       const Phone = (Api as any).phone;
 
-      await client.invoke(
+      await (await (await import('@/lib/telegram/client')).getTelegramClient()).invoke(
         new Phone.SendSignalingData({
           peer: new Phone.InputPhoneCall({
-            id: BigInt(payload.callId.replace('rc_', '')),
-            accessHash: BigInt(0),
+            id: BigInt(this.callId.replace('rc_', '')),
+            accessHash: this.phoneAccessHash,
           }),
           data: new TextEncoder().encode(JSON.stringify(payload)),
         })
@@ -316,6 +307,7 @@ export class WebRTCCallManager {
     this.state = 'idle';
     this.groupCallId = null;
     this.groupCall = null;
+    this.phoneAccessHash = BigInt(0);
     this.onCallEnd?.();
   }
 
@@ -329,31 +321,12 @@ export class WebRTCCallManager {
     });
   }
 
-  // ── Chat fallback: offer/answer/end/reject uchun xabar ──
-  private async sendOfferFallback(
-    peerId: string,
-    peerType: string,
-    payload: SignalPayload
-  ): Promise<void> {
-    try {
-      await requestCall(peerId, peerType, payload);
-    } catch {
-      await this.sendChatFallback(peerId, peerType, payload);
-    }
+  setPhoneAccessHash(hash: bigint) {
+    this.phoneAccessHash = hash;
   }
 
-  private async sendChatFallback(
-    peerId: string,
-    peerType: string,
-    payload: SignalPayload
-  ): Promise<void> {
-    try {
-      const { sendMessage } = await import('@/lib/telegram/messages');
-      const text = CALL_PREFIX + JSON.stringify(payload);
-      await sendMessage(peerId, peerType, text);
-    } catch {
-      // Oxirgi kurish: signaling yo'q
-    }
+  getPhoneAccessHash() {
+    return this.phoneAccessHash;
   }
 }
 

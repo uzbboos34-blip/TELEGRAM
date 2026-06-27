@@ -26,12 +26,12 @@ function decodeSignal(raw: Uint8Array): SignalPayload | null {
   catch { return null; }
 }
 
-// Qo'ng'iroq boshlash
+// Qo'ng'iroq boshlash — accessHash ni qaytarish uchun wrapper
 export async function requestCall(
   peerId: string,
   peerType: string,
   payload: SignalPayload
-): Promise<void> {
+): Promise<{ accessHash: bigint }> {
   const client = await getTelegramClient();
   const inputUser = getCachedEntity(peerId);
 
@@ -42,7 +42,7 @@ export async function requestCall(
   const { Api }: any = await import('telegram');
   const Phone = (Api as any).phone;
 
-  await (client as any).invoke(
+  const res: any = await (client as any).invoke(
     new Phone.RequestCall({
       userId: inputUser as any,
       randomId: Math.floor(Math.random() * 0x7fffffff),
@@ -54,6 +54,10 @@ export async function requestCall(
       }),
     })
   );
+
+  const phoneCall = res.phoneCall || res;
+  const accessHash = phoneCall.accessHash ?? BigInt(0);
+  return { accessHash };
 }
 
 // Qabul qilish

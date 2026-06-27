@@ -7,12 +7,8 @@ import { useAppStore } from '@/lib/store';
 import Sidebar from '@/components/chat/Sidebar';
 import CallScreen from '@/components/call/CallScreen';
 import { callManager } from '@/lib/webrtc/call-manager';
-import { type SignalPayload } from '@/lib/telegram/call-signaling';
+import { type SignalPayload as CallSignal } from '@/lib/telegram/call-signaling';
 import { getCachedPeer } from '@/lib/telegram/peer-cache';
-
-const CALL_PREFIX = '📞RC:';
-
-type CallSignal = SignalPayload;
 
 export default function ChatsLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -39,12 +35,11 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
         const { setupSignalHandler } = await import('@/lib/telegram/call-signaling');
         const client = await getTelegramClient();
 
-        // 1. Phone API orqali signaling (UpdatePhoneCall)
+        // Phone API orqali signaling (UpdatePhoneCall)
         setupSignalHandler((peerId, payload) => {
           handleIncomingSignal(peerId, payload);
         });
 
-        // 2. Chat fallback orqali signaling (UpdateNewMessage)
         const { Raw } = await import('telegram/events');
 
         const handler = async (update: any) => {
@@ -68,38 +63,26 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
 
               if (!targetChatId) return;
 
-              const isSignal = parsed.text.startsWith(CALL_PREFIX) || parsed.text.startsWith('📞 RC:');
-              if (!isSignal) {
-                const state = useAppStore.getState();
-                if (state.activeChatId === targetChatId) {
-                  const currentMsgs = state.messages[targetChatId] || [];
-                  if (!currentMsgs.some(m => m.id === parsed.id)) {
-                    state.addMessage(targetChatId, parsed);
-                  }
+              const state = useAppStore.getState();
+              if (state.activeChatId === targetChatId) {
+                const currentMsgs = state.messages[targetChatId] || [];
+                if (!currentMsgs.some(m => m.id === parsed.id)) {
+                  state.addMessage(targetChatId, parsed);
                 }
-                const updatedDialogs = state.dialogs.map(d => {
-                  if (d.id === targetChatId) {
-                    return {
-                      ...d,
-                      lastMessage: parsed.text || (parsed.media ? '📎 Media' : ''),
-                      lastMessageDate: parsed.date,
-                      unreadCount: !parsed.isOutgoing ? d.unreadCount + 1 : d.unreadCount,
-                    };
-                  }
-                  return d;
-                });
-                state.setDialogs(updatedDialogs);
-                return;
               }
 
-              const currentUser = getCurrentUser();
-              const isOutgoing = parsed.isOutgoing || (currentUser?.id && parsed.fromId === currentUser.id);
-              if (isOutgoing) return;
-
-              const signal = CallSignal_parse(parsed.text);
-              if (!signal) return;
-
-              handleIncomingSignal(targetChatId, signal);
+              const updatedDialogs = state.dialogs.map(d => {
+                if (d.id === targetChatId) {
+                  return {
+                    ...d,
+                    lastMessage: parsed.text || (parsed.media ? '📎 Media' : ''),
+                    lastMessageDate: parsed.date,
+                    unreadCount: !parsed.isOutgoing ? d.unreadCount + 1 : d.unreadCount,
+                  };
+                }
+                return d;
+              });
+              state.setDialogs(updatedDialogs);
             }
           } catch (e) {
             console.warn('[Layout] Raw update handler error:', e);
@@ -166,14 +149,6 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
       {(activeCall || incomingCall) && <CallScreen />}
     </div>
   );
-}
-
-// ── Helper ─────────────────────────────────────────────────
-function CallSignal_parse(text: string): CallSignal | null {
-  const prefix = text.startsWith(CALL_PREFIX) ? CALL_PREFIX : (text.startsWith('📞 RC:') ? '📞 RC:' : null);
-  if (!prefix) return null;
-  try { return JSON.parse(text.slice(prefix.length)); }
-  catch { return null; }
 }
 
 // TypeScript helper — setActiveCall partial update
