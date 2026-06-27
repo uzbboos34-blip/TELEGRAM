@@ -6,8 +6,13 @@ import { isAuthenticated, getCurrentUser } from '@/lib/telegram/auth';
 import { useAppStore } from '@/lib/store';
 import Sidebar from '@/components/chat/Sidebar';
 import CallScreen from '@/components/call/CallScreen';
-import { CALL_PREFIX, CallSignal, callManager } from '@/lib/webrtc/call-manager';
+import { callManager } from '@/lib/webrtc/call-manager';
+import { type SignalPayload } from '@/lib/telegram/call-signaling';
 import { getCachedPeer } from '@/lib/telegram/peer-cache';
+
+const CALL_PREFIX = '📞RC:';
+
+type CallSignal = SignalPayload;
 
 export default function ChatsLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -31,15 +36,22 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
     async function setupListener() {
       try {
         const { getTelegramClient } = await import('@/lib/telegram/client');
-        const { Raw }               = await import('telegram/events');
+        const { setupSignalHandler } = await import('@/lib/telegram/call-signaling');
         const client = await getTelegramClient();
+
+        // 1. Phone API orqali signaling (UpdatePhoneCall)
+        setupSignalHandler((peerId, payload) => {
+          handleIncomingSignal(peerId, payload);
+        });
+
+        // 2. Chat fallback orqali signaling (UpdateNewMessage)
+        const { Raw } = await import('telegram/events');
 
         const handler = async (update: any) => {
           try {
             const className = update.className || update.constructor?.name;
             if (!className) return;
 
-            // 1. Yangi xabar kelishi (kiruvchi va chiquvchi)
             if (className === 'UpdateNewMessage' || className === 'UpdateNewChannelMessage') {
               const msg = update.message;
               if (!msg) return;
@@ -56,115 +68,38 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
 
               if (!targetChatId) return;
 
-              // a. Agar xabar Call signal bo'lsa
               const isSignal = parsed.text.startsWith(CALL_PREFIX) || parsed.text.startsWith('📞 RC:');
-              if (isSignal) {
-                const currentUser = getCurrentUser();
-                const isOutgoing = parsed.isOutgoing || (currentUser?.id && parsed.fromId === currentUser.id);
-                if (isOutgoing) return; // O'zim yuborgan call signal
-
-                const signal = CallSignal_parse(parsed.text);
-                if (!signal) return;
-
-                if (signal.type === 'offer') {
-                  const state = useAppStore.getState();
-                  if (state.activeCall || state.incomingCall) {
-                    callManager.callId = signal.callId;
-                    callManager.peerId = targetChatId;
-                    callManager.peerType = 'user';
-                    await callManager.rejectCall();
-                    return;
-                  }
-
-                  const cached = getCachedPeer(targetChatId);
-                  const peerName = cached?.name || signal.callerName || 'Noma\'lum';
-                  useAppStore.getState().setIncomingCall({
-                    callId: signal.callId,
-                    peerId: targetChatId,
-                    peerName,
-                    isVideo: signal.video || false,
-                    signal,
-                  });
-                } else if (signal.type === 'answer' || signal.type === 'ice') {
-                  await callManager.handleSignal(signal);
-                  if (signal.type === 'answer') {
-                    const current = useAppStore.getState().activeCall;
-                    if (current) useAppStore.getState().setActiveCall({ ...current, status: 'active' });
-                  }
-                } else if (signal.type === 'end' || signal.type === 'reject') {
-                  await callManager.handleSignal(signal);
-                  useAppStore.getState().setIncomingCall(null);
-                  useAppStore.getState().setActiveCall(null);
-                }
-                return; // Ovozli/video qo'ng'iroq signal xabari yashiriladi
-              }
-
-              // b. Oddiy xabarlarni do'konga qo'shish va dialoglarni yangilash
-              const state = useAppStore.getState();
-
-              if (state.activeChatId === targetChatId) {
-                const currentMsgs = state.messages[targetChatId] || [];
-                if (!currentMsgs.some(m => m.id === parsed.id)) {
-                  state.addMessage(targetChatId, parsed);
-                }
-              }
-
-              // Dialogs ro'yxatini yangilash
-              const updatedDialogs = state.dialogs.map(d => {
-                if (d.id === targetChatId) {
-                  return {
-                    ...d,
-                    lastMessage: parsed.text || (parsed.media ? '📎 Media' : ''),
-                    lastMessageDate: parsed.date,
-                    unreadCount: !parsed.isOutgoing ? d.unreadCount + 1 : d.unreadCount,
-                  };
-                }
-                return d;
-              });
-              state.setDialogs(updatedDialogs);
-            }
-
-            // 2. Chat tarixining boshqa odam tomonidan o'qilishi (double-tick real-time)
-            else if (className === 'UpdateReadHistoryOutbox' || className === 'UpdateReadChannelOutbox') {
-              const peerId = (update.peer?.userId ?? update.channelId)?.toString();
-              const maxId = update.maxId;
-              if (!peerId || !maxId) return;
-
-              const state = useAppStore.getState();
-              const chatMsgs = state.messages[peerId] || [];
-              if (chatMsgs.length > 0) {
-                const updated = chatMsgs.map(m => {
-                  if (m.isOutgoing && m.id <= maxId && !m.isRead) {
-                    return { ...m, isRead: true };
-                  }
-                  return m;
-                });
-                state.setMessages(peerId, updated);
-              }
-            }
-
-            // 3. User onlayn/offlayn holati o'zgarishi
-            else if (className === 'UpdateUserStatus') {
-              const userId = update.userId?.toString();
-              const status = update.status;
-              if (!userId || !status) return;
-
-              const { parseUserStatus, cachePeer, getCachedPeer } = await import('@/lib/telegram/peer-cache');
-              const { isOnline, text: statusText } = parseUserStatus(status);
-
-              const cached = getCachedPeer(userId);
-              if (cached) {
-                cachePeer(userId, { ...cached, isOnline, statusText });
-
+              if (!isSignal) {
                 const state = useAppStore.getState();
+                if (state.activeChatId === targetChatId) {
+                  const currentMsgs = state.messages[targetChatId] || [];
+                  if (!currentMsgs.some(m => m.id === parsed.id)) {
+                    state.addMessage(targetChatId, parsed);
+                  }
+                }
                 const updatedDialogs = state.dialogs.map(d => {
-                  if (d.id === userId) {
-                    return { ...d, online: isOnline, statusText };
+                  if (d.id === targetChatId) {
+                    return {
+                      ...d,
+                      lastMessage: parsed.text || (parsed.media ? '📎 Media' : ''),
+                      lastMessageDate: parsed.date,
+                      unreadCount: !parsed.isOutgoing ? d.unreadCount + 1 : d.unreadCount,
+                    };
                   }
                   return d;
                 });
                 state.setDialogs(updatedDialogs);
+                return;
               }
+
+              const currentUser = getCurrentUser();
+              const isOutgoing = parsed.isOutgoing || (currentUser?.id && parsed.fromId === currentUser.id);
+              if (isOutgoing) return;
+
+              const signal = CallSignal_parse(parsed.text);
+              if (!signal) return;
+
+              handleIncomingSignal(targetChatId, signal);
             }
           } catch (e) {
             console.warn('[Layout] Raw update handler error:', e);
@@ -178,6 +113,39 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
         };
       } catch (e) {
         console.warn('[Layout] Could not setup update listener:', e);
+      }
+    }
+
+    function handleIncomingSignal(peerId: string, signal: CallSignal) {
+      if (signal.type === 'offer') {
+        const state = useAppStore.getState();
+        if (state.activeCall || state.incomingCall) {
+          callManager.callId = signal.callId;
+          callManager.peerId = peerId;
+          callManager.peerType = 'user';
+          callManager.rejectCall();
+          return;
+        }
+
+        const cached = getCachedPeer(peerId);
+        const peerName = cached?.name || signal.callerName || "Noma'lum";
+        useAppStore.getState().setIncomingCall({
+          callId: signal.callId,
+          peerId,
+          peerName,
+          isVideo: signal.video || false,
+          signal,
+        });
+      } else if (signal.type === 'answer' || signal.type === 'ice') {
+        callManager.handleSignal(signal);
+        if (signal.type === 'answer') {
+          const current = useAppStore.getState().activeCall;
+          if (current) useAppStore.getState().setActiveCall({ ...current, status: 'active' });
+        }
+      } else if (signal.type === 'end' || signal.type === 'reject') {
+        callManager.handleSignal(signal);
+        useAppStore.getState().setIncomingCall(null);
+        useAppStore.getState().setActiveCall(null);
       }
     }
 

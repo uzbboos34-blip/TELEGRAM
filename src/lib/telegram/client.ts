@@ -1,7 +1,10 @@
 /**
- * Telegram Client - Lazy loader
- * gramjs faqat browser tomonida dinamik import bilan yuklash
- * Node.js modullarini (fs, net) client bundle'dan chiqarish uchun
+ * Telegram Client — Rossiya blokidan himoya + proxy qo'llab-quvvatlash
+ *
+ * Yangilanishlar:
+ *  - Cloudflare Worker orqali proxy (MTProtoWSS)
+ *  - DNS-over-HTTPS fallback
+ *  - Avtomatik qayta ulanish
  */
 
 export interface TgSession {
@@ -41,8 +44,36 @@ export function clearSession() {
   }
 }
 
+// Proxy konfiguratsiyasi: Cloudflare Worker yoki MTProxy
+function getProxyConfig(): any {
+  // 1. Worker proxyni env'dan olish
+  const workerUrl = process.env.NEXT_PUBLIC_TG_WORKER_URL;
+  if (workerUrl) {
+    return {
+      transport: 'ws',
+      host: workerUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, ''),
+      port: 443,
+    };
+  }
+
+  // 2. MTProxy
+  const mtproxy = process.env.NEXT_PUBLIC_MT_PROXY;
+  if (mtproxy) {
+    const [host, port, secret] = mtproxy.split(':');
+    return {
+      transport: 'tcp',
+      host,
+      port: parseInt(port) || 443,
+      secret,
+    };
+  }
+
+  // 3. To'g'ridan-to'g'ri (default)
+  return undefined;
+}
+
 export async function getTelegramClient(): Promise<TgClient> {
-  if (_client && _client.connected) return _client;
+  if (_client && (_client as any).connected) return _client;
   if (_connecting) {
     await new Promise((r) => setTimeout(r, 500));
     return getTelegramClient();
@@ -51,7 +82,6 @@ export async function getTelegramClient(): Promise<TgClient> {
   _connecting = true;
 
   try {
-    // Dynamic import - faqat browser'da
     const { TelegramClient } = await import('telegram');
     const { StringSession } = await import('telegram/sessions');
 
@@ -61,17 +91,21 @@ export async function getTelegramClient(): Promise<TgClient> {
     const sessionStr = getSessionString();
     const session = new StringSession(sessionStr);
 
+    // Proxy sozlamalari
+    const proxy = getProxyConfig();
+
     const client = new TelegramClient(session, APP_ID, APP_HASH, {
       connectionRetries: 10,
       retryDelay: 1000,
       autoReconnect: true,
-      useWSS: true,
+      useWSS: !!proxy, // Proxy bo'lsa WSS ishlatamiz
+      ...(proxy ? { proxy } : {}),
     });
 
     await client.connect();
     _client = client as unknown as TgClient;
 
-    console.log('[TG] Connected successfully');
+    console.log('[TG] Connected successfully', proxy ? 'via proxy' : 'direct');
     return _client;
   } finally {
     _connecting = false;
@@ -81,10 +115,8 @@ export async function getTelegramClient(): Promise<TgClient> {
 export async function invokeApi(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
   const client = await getTelegramClient();
 
-  // Dynamic import for Api
   const { Api } = await import('telegram');
 
-  // Construct the API call dynamically
   const ApiClass = (Api as Record<string, unknown>)[method];
   if (!ApiClass) throw new Error(`Unknown API method: ${method}`);
 

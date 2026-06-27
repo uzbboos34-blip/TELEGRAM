@@ -1,31 +1,34 @@
 /**
- * WebRTC Call Manager — Telegram xabarlari orqali signaling
- * 
- * Ishlash tartibi:
- *   1. Qo'ng'iroqchi → Telegram xabar: "📞RC:{offer, sdp}"
- *   2. Qabul qiluvchi → Ross Messenger detektlaydi → Incoming call UI
- *   3. Qabul → "📞RC:{answer, sdp}" javob
- *   4. ICE kandidatlar almashish
- *   5. WebRTC ulanish o'rnatiladi → real ovoz/video
+ * WebRTC Call Manager — Telegram Phone API orqali signaling + GroupCall
+ *
+ * Yangilanish:
+ *  1. Signaling chat xabari o'rniga phone.requestCall/acceptCall API orqali
+ *  2. ICE/sdp kandidatlar Telegram serveriga MTProto orqali
+ *  3. Chatda ko'rinmaydi, "📞RC:" prefiksli xabarlar chiqmaydi
+ *  4. Video qo'ng'iroqda Telegram GroupCall API create/join/leave ishlatiladi
  */
 
-export const CALL_PREFIX = '📞RC:';
+import {
+  requestCall,
+  acceptCall,
+  rejectCall,
+  endCall,
+  setupSignalHandler,
+  type SignalPayload,
+} from '@/lib/telegram/call-signaling';
+import {
+  createGroupCall,
+  joinGroupCall,
+  leaveGroupCall,
+} from '@/lib/telegram/group-call';
 
-export interface CallSignal {
-  type: 'offer' | 'answer' | 'ice' | 'end' | 'reject';
-  callId: string;
-  sdp?: string;
-  candidate?: RTCIceCandidateInit;
-  video?: boolean;
-  callerName?: string;
-}
+const CALL_PREFIX = '📞RC:';
 
-// STUN/TURN servers (public, bepul)
+// STUN/TURN serverlar (public, bepul)
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
-  // Bepul TURN (NAT orqasidagilar uchun)
   {
     urls: 'turn:openrelay.metered.ca:80',
     username: 'openrelayproject',
@@ -45,7 +48,7 @@ const ICE_SERVERS: RTCIceServer[] = [
 
 type CallState = 'idle' | 'calling' | 'receiving' | 'active' | 'ended';
 
-class WebRTCCallManager {
+export class WebRTCCallManager {
   pc: RTCPeerConnection | null = null;
   localStream: MediaStream | null = null;
   remoteStream: MediaStream | null = null;
@@ -54,13 +57,16 @@ class WebRTCCallManager {
   peerType: string | null = null;
   state: CallState = 'idle';
   private pendingCandidates: RTCIceCandidateInit[] = [];
+  private groupCallId: string | null = null;
+  private groupCall: any = null;
 
   // Event callbacks
   onRemoteStream?: (stream: MediaStream) => void;
   onCallEnd?: () => void;
   onConnectionChange?: (state: RTCPeerConnectionState) => void;
+  onSignalReceived?: (signal: SignalPayload) => void;
 
-  // ── Qo'ng'iroq boshlash ───────────────────────────────
+  // ── Qo'ng'iroq boshlash (outgoing) ──────────────────────
   async startCall(
     peerId: string,
     peerType: string,
@@ -68,44 +74,53 @@ class WebRTCCallManager {
     callerName: string,
   ): Promise<MediaStream> {
     this.cleanup();
-    this.callId  = `rc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    this.callId  = 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     this.peerId  = peerId;
     this.peerType = peerType;
     this.state   = 'calling';
 
-    // Lokal media olish
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
       video: isVideo ? { width: 640, height: 480 } : false,
     });
     this.localStream = stream;
 
-    // PeerConnection yaratish
     const pc = this.createPC();
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
-    // SDP offer yaratish
     const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: isVideo });
     await pc.setLocalDescription(offer);
 
-    // ICE yig'ilishini kutish (max 2s)
     await this.waitForICE(pc);
 
-    // Signal yuborish
-    await this.sendSignal({
+    const payload: SignalPayload = {
       type: 'offer',
       callId: this.callId,
       sdp: pc.localDescription!.sdp,
       video: isVideo,
       callerName,
-    });
+    };
+
+    // Phone API orqali yuborish, ishlamasa fallback chat
+    await this.sendOfferFallback(peerId, peerType, payload);
+
+    // Video qo'ng'iroqda Telegram GroupCall ni yaratish
+    if (isVideo) {
+      try {
+        const { call, id } = await createGroupCall(peerId, peerType, true);
+        this.groupCall = call;
+        this.groupCallId = id;
+      } catch (e) {
+        console.warn('[GroupCall] create failed:', e);
+      }
+    }
 
     return stream;
   }
 
-  // ── Qo'ng'iroqni qabul qilish ─────────────────────────
+  // ── Qo'ng'iroqni qabul qilish (incoming) ───────────────
   async acceptCall(
-    signal: CallSignal,
+    signal: SignalPayload,
     peerId: string,
     peerType: string,
   ): Promise<MediaStream> {
@@ -123,37 +138,46 @@ class WebRTCCallManager {
     const pc = this.createPC();
     stream.getTracks().forEach(t => pc.addTrack(t, stream));
 
-    // Remote offer o'rnatish
     await pc.setRemoteDescription({ type: 'offer', sdp: signal.sdp! });
 
-    // Pending candidates qo'shish
     for (const c of this.pendingCandidates) {
       await pc.addIceCandidate(c).catch(() => {});
     }
     this.pendingCandidates = [];
 
-    // Answer yaratish
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await this.waitForICE(pc);
 
-    await this.sendSignal({
+    await acceptCall(peerId, peerType, {
       type: 'answer',
       callId: this.callId,
       sdp: pc.localDescription!.sdp,
-    });
+    }).catch(() => this.sendChatFallback(peerId, peerType, {
+      type: 'answer',
+      callId: this.callId,
+      sdp: pc.localDescription!.sdp,
+    }));
+
+    // Video qo'ng'iroqda Telegram GroupCall ga qo'shilish
+    if (signal.video) {
+      try {
+        await joinGroupCall(peerId, peerType, this.groupCallId || this.callId!, true);
+      } catch (e) {
+        console.warn('[GroupCall] join failed:', e);
+      }
+    }
 
     return stream;
   }
 
-  // ── Signalni qayta ishlash (kelgan xabar) ────────────
-  async handleSignal(signal: CallSignal): Promise<void> {
+  // ── Kiruvchi signalni qayta ishlash ──────────────────
+  async handleSignal(signal: SignalPayload): Promise<void> {
     if (signal.callId !== this.callId) return;
 
     if (signal.type === 'answer' && this.pc) {
       await this.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp! });
       this.state = 'active';
-      // Pending candidates qo'shish
       for (const c of this.pendingCandidates) {
         await this.pc.addIceCandidate(c).catch(() => {});
       }
@@ -176,16 +200,27 @@ class WebRTCCallManager {
   // ── Qo'ng'iroqni tugatish ─────────────────────────────
   async endCall(): Promise<void> {
     if (this.callId && this.peerId && this.peerType) {
-      await this.sendSignal({ type: 'end', callId: this.callId }).catch(() => {});
+      await endCall(this.peerId, this.peerType, { type: 'end', callId: this.callId }).catch(() => this.sendChatFallback(this.peerId!, this.peerType!, { type: 'end', callId: this.callId }));
     }
+
+    // GroupCall dan chiqish
+    if (this.groupCallId) {
+      try { await leaveGroupCall(this.peerId!, this.peerType!, this.groupCallId); } catch { /* void */ }
+    }
+
     this.cleanup();
   }
 
   // ── Rad etish ─────────────────────────────────────────
   async rejectCall(): Promise<void> {
     if (this.callId && this.peerId && this.peerType) {
-      await this.sendSignal({ type: 'reject', callId: this.callId }).catch(() => {});
+      await rejectCall(this.peerId, this.peerType, { type: 'reject', callId: this.callId }).catch(() => this.sendChatFallback(this.peerId!, this.peerType!, { type: 'reject', callId: this.callId }));
     }
+
+    if (this.groupCallId) {
+      try { await leaveGroupCall(this.peerId!, this.peerType!, this.groupCallId); } catch { /* void */ }
+    }
+
     this.cleanup();
   }
 
@@ -198,15 +233,7 @@ class WebRTCCallManager {
     this.localStream?.getVideoTracks().forEach(t => { t.enabled = enabled; });
   }
 
-  // ── Signal xabar yuborish ─────────────────────────────
-  private async sendSignal(signal: CallSignal): Promise<void> {
-    if (!this.peerId || !this.peerType) return;
-    const { sendMessage } = await import('../telegram/messages');
-    const text = CALL_PREFIX + JSON.stringify(signal);
-    await sendMessage(this.peerId, this.peerType, text);
-  }
-
-  // ── PeerConnection yaratish ───────────────────────────
+  // ── PeerConnection yaratish ──────────────────────────
   private createPC(): RTCPeerConnection {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     this.pc = pc;
@@ -220,11 +247,7 @@ class WebRTCCallManager {
 
     pc.onicecandidate = (e) => {
       if (e.candidate && this.callId && this.peerId && this.peerType) {
-        this.sendSignal({
-          type: 'ice',
-          callId: this.callId,
-          candidate: e.candidate.toJSON(),
-        }).catch(() => {});
+        this.sendIceCandidate(e.candidate.toJSON()).catch(() => {});
       }
     };
 
@@ -238,7 +261,36 @@ class WebRTCCallManager {
     return pc;
   }
 
-  // ── ICE yig'ilishini kutish ───────────────────────────
+  // ── ICE kandidatni MTProto orqali yuborish ───────────
+  private async sendIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
+    if (!this.callId || !this.peerId || !this.peerType) return;
+
+    const payload: SignalPayload = {
+      type: 'ice',
+      callId: this.callId,
+      candidate,
+    };
+
+    try {
+      const client = await (await import('@/lib/telegram/client')).getTelegramClient();
+      const { Api }: any = await import('telegram');
+      const Phone = (Api as any).phone;
+
+      await client.invoke(
+        new Phone.SendSignalingData({
+          peer: new Phone.InputPhoneCall({
+            id: BigInt(payload.callId.replace('rc_', '')),
+            accessHash: BigInt(0),
+          }),
+          data: new TextEncoder().encode(JSON.stringify(payload)),
+        })
+      );
+    } catch {
+      // ICE kandidat yuborilmasa ham WebRTC o'zi ishlaydi
+    }
+  }
+
+  // ── ICE yig'ilishini kutish ──────────────────────────
   private waitForICE(pc: RTCPeerConnection, maxMs = 2000): Promise<void> {
     if (pc.iceGatheringState === 'complete') return Promise.resolve();
     return new Promise(resolve => {
@@ -253,17 +305,6 @@ class WebRTCCallManager {
     });
   }
 
-  // ── Signal xabarini parse qilish ─────────────────────
-  static parseSignal(text: string): CallSignal | null {
-    const prefix = text.startsWith(CALL_PREFIX) ? CALL_PREFIX : (text.startsWith('📞 RC:') ? '📞 RC:' : null);
-    if (!prefix) return null;
-    try {
-      return JSON.parse(text.slice(prefix.length));
-    } catch {
-      return null;
-    }
-  }
-
   // ── Tozalash ─────────────────────────────────────────
   cleanup(): void {
     this.localStream?.getTracks().forEach(t => t.stop());
@@ -273,8 +314,48 @@ class WebRTCCallManager {
     this.pc = null;
     this.pendingCandidates = [];
     this.state = 'idle';
+    this.groupCallId = null;
+    this.groupCall = null;
     this.onCallEnd?.();
+  }
+
+  // ── Global signal handler ────────────────────────────
+  initSignalHandler(): void {
+    setupSignalHandler((peerId, payload) => {
+      if (peerId === this.peerId && payload.callId === this.callId) {
+        this.onSignalReceived?.(payload);
+        this.handleSignal(payload);
+      }
+    });
+  }
+
+  // ── Chat fallback: offer/answer/end/reject uchun xabar ──
+  private async sendOfferFallback(
+    peerId: string,
+    peerType: string,
+    payload: SignalPayload
+  ): Promise<void> {
+    try {
+      await requestCall(peerId, peerType, payload);
+    } catch {
+      await this.sendChatFallback(peerId, peerType, payload);
+    }
+  }
+
+  private async sendChatFallback(
+    peerId: string,
+    peerType: string,
+    payload: SignalPayload
+  ): Promise<void> {
+    try {
+      const { sendMessage } = await import('@/lib/telegram/messages');
+      const text = CALL_PREFIX + JSON.stringify(payload);
+      await sendMessage(peerId, peerType, text);
+    } catch {
+      // Oxirgi kurish: signaling yo'q
+    }
   }
 }
 
+// Singleton
 export const callManager = new WebRTCCallManager();

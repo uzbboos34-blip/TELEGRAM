@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/lib/store';
-import { callManager, CallSignal } from '@/lib/webrtc/call-manager';
+import { callManager } from '@/lib/webrtc/call-manager';
+import { type SignalPayload as CallSignal } from '@/lib/telegram/call-signaling';
 import { getCachedPeer } from '@/lib/telegram/peer-cache';
 
 // ── Ranglar ───────────────────────────────────────────────
@@ -88,7 +89,7 @@ function IncomingCallUI() {
       <h2 style={{color:'#fff',fontSize:24,fontWeight:700,marginBottom:8}}>
         {incomingCall.peerName}
       </h2>
-      <p style={{color:'rgba(255,255,255,.5)',fontSize:14,marginBottom:48}}>Qo&apos;ng&apos;iroq qilyapti...</p>
+      <p style={{color:'rgba(255,255,255,.5)',fontSize:14,marginBottom:48}}>Qo'ng'iroq qilyapti...</p>
 
       <div style={{display:'flex',gap:40}}>
         {/* Rad etish */}
@@ -271,7 +272,7 @@ function ActiveCallUI() {
           whiteSpace: 'nowrap',
           boxShadow: '0 2px 10px rgba(0,0,0,.3)',
         }}>
-          ⚠️ Yaqiningiz oflayn. U ilovani ochishi kerak.
+          ⚠️ Yaqingingiz oflayn. U ilovani ochishi kerak.
         </div>
       )}
       {/* Background */}
@@ -291,7 +292,7 @@ function ActiveCallUI() {
       {/* Top info */}
       <div style={{position:'relative',zIndex:2,textAlign:'center',padding:'52px 24px 12px'}}>
         <p style={{fontSize:12,letterSpacing:1.5,color:'rgba(255,255,255,.5)',marginBottom:6,textTransform:'uppercase'}}>
-          {isVideo ? '📹 Video' : '📞 Ovozli'} qo&apos;ng&apos;iroq
+          {isVideo ? '📹 Video' : '📞 Ovozli'} qo'ng'iroq
         </p>
         <h1 style={{fontSize:26,fontWeight:700,color:'#fff',marginBottom:6}}>
           {activeCall.peerName}
