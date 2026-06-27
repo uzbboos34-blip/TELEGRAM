@@ -8,6 +8,7 @@
  *  - Relay server ma'lumotlari (connections) parse qilinadi
  */
 
+import { Buffer } from 'buffer';
 import { getTelegramClient } from './client';
 import { getCachedEntity } from './peer-cache';
 import {
@@ -114,7 +115,7 @@ export async function requestPhoneCall(peerId: string, video = false): Promise<A
     new (Api as any).phone.RequestCall({
       userId: inputEntity,
       randomId: Math.floor(Math.random() * 0x7fffffff),
-      gAHash: callerKeys.gAHash,
+      gAHash: Buffer.from(callerKeys.gAHash),
       protocol: await makeProtocol(Api, video),
       video: video,
     })
@@ -168,7 +169,7 @@ export async function acceptPhoneCall(
         id: callId,
         accessHash: callAccessHash,
       }),
-      gB: calleeKeys.gB,
+      gB: Buffer.from(calleeKeys.gB),
       protocol: await makeProtocol(Api, video),
     })
   );
@@ -221,7 +222,7 @@ export async function confirmPhoneCall(
         id: callId,
         accessHash: callAccessHash,
       }),
-      gA: _activeCall.callerKeys.gA, // Endi asl g_a yuboriladi
+      gA: Buffer.from(_activeCall.callerKeys.gA), // Endi asl g_a yuboriladi
       keyFingerprint,
       protocol: await makeProtocol(Api, video),
     })
