@@ -5,6 +5,7 @@
  *  - Cloudflare Worker orqali proxy (MTProtoWSS)
  *  - DNS-over-HTTPS fallback
  *  - Avtomatik qayta ulanish
+ *  - useWSS: true doimiy (HTTPS sahifada ws:// bloklanadi)
  */
 
 export interface TgSession {
@@ -91,14 +92,13 @@ export async function getTelegramClient(): Promise<TgClient> {
     const sessionStr = getSessionString();
     const session = new StringSession(sessionStr);
 
-    // Proxy sozlamalari
     const proxy = getProxyConfig();
 
     const client = new TelegramClient(session, APP_ID, APP_HASH, {
       connectionRetries: 10,
       retryDelay: 1000,
       autoReconnect: true,
-      useWSS: !!proxy, // Proxy bo'lsa WSS ishlatamiz
+      useWSS: true, // HTTPS sahifada ws:// SecurityError beradi, shuning uchun doimiy WSS
       ...(proxy ? { proxy } : {}),
     });
 
