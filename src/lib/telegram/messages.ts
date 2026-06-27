@@ -18,6 +18,11 @@ export interface Message {
   media?: MessageMedia;
   forwarded?: boolean;
   editDate?: number;
+  phoneCall?: {
+    video: boolean;
+    reason: 'missed' | 'disconnect' | 'hangup' | 'busy';
+    duration?: number;
+  };
 }
 
 export interface MessageMedia {
@@ -119,6 +124,30 @@ export function parseRawMessage(msg: any): Message {
     }
   }
 
+  let phoneCall: Message['phoneCall'] | undefined;
+
+  if (msg.className === 'MessageService') {
+    const action = msg.action;
+    if (action && action.className === 'MessageActionPhoneCall') {
+      const reasonClass = action.reason?.className || '';
+      let reason: 'missed' | 'disconnect' | 'hangup' | 'busy' = 'hangup';
+      
+      if (reasonClass.includes('Missed')) {
+        reason = 'missed';
+      } else if (reasonClass.includes('Disconnect')) {
+        reason = 'disconnect';
+      } else if (reasonClass.includes('Busy')) {
+        reason = 'busy';
+      }
+
+      phoneCall = {
+        video: action.video || false,
+        reason,
+        duration: action.duration,
+      };
+    }
+  }
+
   const fromIdStr = (msg.fromId ?? msg.peerId)?.toString();
   let senderName = '';
   if (msg.sender) {
@@ -142,6 +171,7 @@ export function parseRawMessage(msg: any): Message {
     media,
     forwarded: !!msg.fwdFrom,
     editDate: msg.editDate,
+    phoneCall,
   };
 }
 
@@ -166,7 +196,10 @@ export async function getMessages(
       offsetId: offsetId || undefined,
     });
 
-    const messages = rawMessages.filter((m: any) => m.className === 'Message' && !(m.message && (m.message.startsWith('📞RC:') || m.message.startsWith('📞 RC:'))));
+    const messages = rawMessages.filter((m: any) => 
+      (m.className === 'Message' || m.className === 'MessageService') && 
+      !(m.message && (m.message.startsWith('📞RC:') || m.message.startsWith('📞 RC:')))
+    );
 
     // Store raw messages for media download
     for (const msg of messages) {

@@ -493,6 +493,109 @@ function MessageBubble({
   const isGroupOrChannel = peerType === 'group' || peerType === 'channel';
   const showSenderName = isGroupOrChannel && !msg.isOutgoing;
 
+  // ── VoIP Service Message rendering ─────────────────
+  if (msg.phoneCall) {
+    const pc = msg.phoneCall;
+    const isMissed = pc.reason === 'missed';
+    
+    // Matn va ikonkalarni aniqlash
+    let callLabel = '';
+    let iconColor = '';
+    let arrowSvg = null;
+
+    if (msg.isOutgoing) {
+      callLabel = pc.video ? 'Chiquvchi video' : 'Chiquvchi qo\'ng\'iroq';
+      iconColor = '#4CAF50'; // yashil
+      arrowSvg = (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="3" style={{ transform: 'rotate(-45deg)' }}>
+          <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
+        </svg>
+      );
+    } else {
+      if (isMissed) {
+        callLabel = pc.video ? 'O\'tkazib yuborilgan video' : 'O\'tkazib yuborilgan qo\'ng\'iroq';
+        iconColor = '#F44336'; // qizil
+        arrowSvg = (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="3" style={{ transform: 'rotate(135deg)' }}>
+            <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
+          </svg>
+        );
+      } else {
+        callLabel = pc.video ? 'Kiruvchi video' : 'Kiruvchi qo\'ng\'iroq';
+        iconColor = '#4CAF50'; // yashil
+        arrowSvg = (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="3" style={{ transform: 'rotate(135deg)' }}>
+            <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
+          </svg>
+        );
+      }
+    }
+
+    // Davomiylikni formatlash
+    let durationLabel = '';
+    if (!isMissed && pc.duration) {
+      const m = Math.floor(pc.duration / 60);
+      const s = pc.duration % 60;
+      durationLabel = m > 0 ? `${m} m ${s} s` : `${s} soniya`;
+    } else if (isMissed) {
+      durationLabel = 'Javobsiz';
+    } else {
+      durationLabel = 'Ulanmadi';
+    }
+
+    return (
+      <div className={`message-row ${msg.isOutgoing ? 'out' : 'in'}`}>
+        <div className="message-bubble call-service-bubble" style={{
+          display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+          background: msg.isOutgoing ? 'var(--bubble-out-bg)' : 'var(--bubble-in-bg)',
+          borderRadius: 16, maxWidth: 280,
+        }}>
+          {/* Chap tarafda telefon belgisi */}
+          <div style={{
+            width: 38, height: 38, borderRadius: '50%',
+            background: msg.isOutgoing ? 'rgba(255,255,255,.15)' : 'rgba(0,0,0,.06)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            {pc.video ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.59 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.72a16 16 0 0 0 6.37 6.37l1.79-1.79a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+              </svg>
+            )}
+          </div>
+
+          {/* O'rta qismda matn */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
+              {callLabel}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
+              {arrowSvg}
+              <span>{durationLabel}</span>
+            </div>
+          </div>
+
+          {/* Vaqt va Meta */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', alignSelf: 'flex-end', gap: 2 }}>
+            <span style={{ fontSize: 10, opacity: 0.5, color: 'var(--text-secondary)' }}>{time}</span>
+            {msg.isOutgoing && (
+              <span className={`message-status ${msg.isRead ? 'read' : 'sent'}`} style={{ fontSize: 12 }}>
+                {msg.isRead ? (
+                  <svg width="16" height="11" viewBox="0 0 18 12" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 6 5 10 13 2"/><polyline points="7 6 11 10 17 2"/></svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+                )}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`message-row ${msg.isOutgoing ? 'out' : 'in'}`}>
       <div className="message-bubble">

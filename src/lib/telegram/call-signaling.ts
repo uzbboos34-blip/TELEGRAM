@@ -91,8 +91,14 @@ export async function requestPhoneCall(peerId: string, video = false): Promise<A
   const client = await getTelegramClient();
   const { Api } = await import('telegram');
 
-  // peer entity cache dan olamiz (dialogs yuklanganda saqlanadi)
-  const inputEntity = getCachedEntity(peerId) as any;
+  // Dinamik ravishda to'g'ri InputUser olish (keshdan yoki GramJS ichki sessiyasidan)
+  let inputEntity: any;
+  try {
+    inputEntity = await (client as any).getInputEntity(peerId);
+  } catch {
+    inputEntity = getCachedEntity(peerId);
+  }
+
   if (!inputEntity) {
     throw new Error(`Peer ${peerId} topilmadi. Avval dialogs yuklang.`);
   }
