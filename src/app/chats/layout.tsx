@@ -130,8 +130,10 @@ export default function ChatsLayout({ children }: { children: React.ReactNode })
     };
   }, []); // eslint-disable-line
 
+  const { activeChatId } = useAppStore();
+
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${activeChatId ? 'has-active-chat' : 'no-active-chat'}`}>
       <Sidebar />
       <main className="chat-area">
         {children}

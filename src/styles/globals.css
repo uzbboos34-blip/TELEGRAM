@@ -241,20 +241,30 @@ body {
   transition: transform var(--transition-normal);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
   .sidebar {
-    position: fixed;
+    position: relative !important;
     top: 0;
     left: 0;
-    width: 100%;
-    z-index: 50;
-    transform: translateX(-100%);
-  }
-  .sidebar.open {
-    transform: translateX(0);
-  }
-  .chat-area {
     width: 100% !important;
+    max-width: 100% !important;
+    z-index: 10;
+    transform: none !important;
+  }
+  
+  .app-layout.no-active-chat .sidebar {
+    display: flex !important;
+  }
+  .app-layout.no-active-chat .chat-area {
+    display: none !important;
+  }
+  
+  .app-layout.has-active-chat .sidebar {
+    display: none !important;
+  }
+  .app-layout.has-active-chat .chat-area {
+    width: 100% !important;
+    display: flex !important;
   }
 }
 
@@ -532,75 +542,7 @@ body {
   border: 1px solid var(--border);
 }
 
-/* ── Message Bubble ───────────────────────────── */
-.message-row {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-sm);
-  max-width: 100%;
-  animation: msg-appear 0.15s ease-out;
-}
-
-@keyframes msg-appear {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.message-row.out {
-  flex-direction: row-reverse;
-}
-
-.message-bubble {
-  max-width: 75%;
-  min-width: 60px;
-  padding: 8px 12px 6px;
-  border-radius: 16px;
-  position: relative;
-  word-break: break-word;
-  box-shadow: var(--shadow-message);
-}
-
-.message-row.in .message-bubble {
-  background: var(--bubble-in);
-  color: var(--bubble-in-text);
-  border-bottom-left-radius: 4px;
-}
-
-.message-row.out .message-bubble {
-  background: var(--bubble-out);
-  color: var(--bubble-out-text);
-  border-bottom-right-radius: 4px;
-}
-
-.message-text {
-  font-size: var(--font-size-md);
-  line-height: 1.45;
-  white-space: pre-wrap;
-}
-
-.message-meta {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.message-time {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.message-row.in .message-time {
-  color: var(--text-secondary);
-}
-
-.message-status {
-  display: flex;
-  align-items: center;
-}
-.message-status.read { color: var(--read); }
-.message-status.sent { color: rgba(255, 255, 255, 0.5); }
+/* Bubble styles are defined in the override section at the bottom of the file */
 
 /* ── Input Area ───────────────────────────────── */
 .input-area {
@@ -1353,45 +1295,76 @@ body {
   font-size: 13.5px;
 }
 
-/* Bottom Navigation */
+/* Bottom Navigation matching Screenshot 4 */
 .bottom-nav {
-  height: 48px;
-  background: #17191d;
-  border-top: 1.5px solid var(--border);
+  height: 56px;
+  background: #17212b;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   justify-content: space-around;
   align-items: center;
-  padding: 0 12px;
+  padding: 0 4px;
   flex-shrink: 0;
 }
 
 .nav-item-btn {
+  flex: 1;
   background: none;
   border: none;
   outline: none;
   cursor: pointer;
-  color: var(--text-secondary);
+  color: #7f91a4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 3px;
+  position: relative;
+}
+
+.nav-item-btn .nav-icon-wrapper {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 38px;
-  border-radius: 6px;
-  transition: color var(--transition-fast), background var(--transition-fast);
+  width: 52px;
+  height: 28px;
+  border-radius: 14px;
+  transition: background 0.2s, color 0.2s;
+  position: relative;
 }
 
-.nav-item-btn:hover {
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--text-primary);
+.nav-item-btn.active .nav-icon-wrapper {
+  background: rgba(42, 171, 238, 0.15);
+  color: #2aabee;
 }
 
 .nav-item-btn.active {
-  color: var(--accent);
+  color: #2aabee;
 }
 
-.nav-profile-avatar {
-  width: 22px;
-  height: 22px;
+.nav-item-btn span {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.nav-profile-img {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1.5px solid transparent;
+  transition: border-color 0.2s;
+}
+
+.nav-item-btn.active .nav-profile-img {
+  border-color: #2aabee;
+}
+
+.nav-profile-placeholder {
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: var(--accent);
   color: white;
@@ -2608,3 +2581,224 @@ body {
   color: #2aabee;
   padding: 8px 16px;
 }
+
+/* Profile Actions & Post Elements (Screenshot 5) */
+.profile-action-btn {
+  background: #17212b !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 10px;
+  color: #2aabee !important;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.profile-action-btn:hover {
+  background: rgba(42, 171, 238, 0.08) !important;
+}
+
+.profile-action-btn:active {
+  transform: scale(0.96);
+}
+
+.post-add-float-btn {
+  background: #2aabee;
+  color: white;
+  border: none;
+  border-radius: 24px;
+  padding: 12px 22px;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(42, 171, 238, 0.4);
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.post-add-float-btn:hover {
+  background: #269cd9;
+}
+
+.post-add-float-btn:active {
+  transform: scale(0.95);
+}
+
+.profile-tab-bar {
+  display: flex;
+  border-bottom: 1.5px solid rgba(255, 255, 255, 0.08);
+  margin-top: 16px;
+}
+
+.profile-tab-item {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #7f91a4;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 12px 0;
+  cursor: pointer;
+  text-align: center;
+  position: relative;
+}
+
+.profile-tab-item.active {
+  color: #2aabee;
+}
+
+.profile-tab-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1.5px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: #2aabee;
+}
+
+.profile-posts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  margin-top: 12px;
+  padding-bottom: 100px; /* Space for float button */
+}
+
+.profile-post-item {
+  aspect-ratio: 1 / 1;
+  background: #101921;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.profile-post-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s;
+}
+
+.profile-post-item:hover img {
+  transform: scale(1.05);
+}
+
+/* ── Leftmost Vertical Folder Sidebar for Desktop (Screenshot 9) ── */
+.desktop-folder-sidebar {
+  width: 72px;
+  background: #0e1621;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0;
+  flex-shrink: 0;
+}
+
+.folder-tabs-vertical, .folder-settings-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+}
+
+.folder-vertical-btn {
+  background: none;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  width: 56px;
+  height: 52px;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #7f91a4;
+  gap: 2px;
+  transition: background 0.2s, color 0.2s;
+  position: relative;
+}
+
+.folder-vertical-btn .folder-icon {
+  font-size: 20px;
+}
+
+.folder-vertical-btn .folder-label {
+  font-size: 9px;
+  text-align: center;
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-vertical-btn:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: white;
+}
+
+.folder-vertical-btn.active {
+  background: rgba(42, 171, 238, 0.1);
+  color: #2aabee;
+}
+
+.vertical-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  background: #2aabee;
+  color: white;
+  font-size: 8.5px;
+  font-weight: bold;
+  padding: 1px 4.5px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+
+/* Responsive display switches for navigation and headers */
+.desktop-only-inline {
+  display: inline;
+}
+
+.mobile-only-inline {
+  display: none;
+}
+
+@media (min-width: 1025px) {
+  /* On desktop, hide horizontal folders scroll and mobile bottom nav */
+  .folders-horizontal-scroll {
+    display: none !important;
+  }
+  .bottom-nav {
+    display: none !important;
+  }
+  .mobile-only-menu-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  /* On mobile/tablet, hide vertical folder sidebar */
+  .desktop-folder-sidebar {
+    display: none !important;
+  }
+  .desktop-only-inline {
+    display: none;
+  }
+  .mobile-only-inline {
+    display: inline;
+  }
+}
+
+

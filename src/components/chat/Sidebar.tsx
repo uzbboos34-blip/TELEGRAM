@@ -42,11 +42,19 @@ export default function Sidebar() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenu] = useState(false);
-  const user = getCurrentUser();
-
-  // Unified Mobile Tabs: chats, contacts, settings, profile
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'contacts' | 'settings' | 'profile'>('chats');
   const [activeFolder, setActiveFolder] = useState<'all' | 'personal' | 'unread' | 'predictions'>('all');
+  const [myAvatarUrl, setMyAvatarUrl] = useState<string | null>(null);
+  const [profileActiveTab, setProfileActiveTab] = useState<'posts' | 'archived'>('posts');
+  const user = getCurrentUser();
+
+  useEffect(() => {
+    if (user?.id) {
+      downloadProfilePhoto(user.id).then(url => {
+        if (url) setMyAvatarUrl(url);
+      });
+    }
+  }, [user?.id]);
 
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -246,6 +254,61 @@ export default function Sidebar() {
           className="mobile-overlay" />
       )}
 
+      {/* ── Leftmost Vertical Folder Sidebar for Desktop (Screenshot 9) ── */}
+      <div className="desktop-folder-sidebar">
+        {/* Top: Folders */}
+        <div className="folder-tabs-vertical">
+          <button className={`folder-vertical-btn ${sidebarTab === 'chats' && activeFolder === 'all' ? 'active' : ''}`} onClick={() => { setSidebarTab('chats'); setActiveFolder('all'); }}>
+            <span className="folder-icon">💬</span>
+            <span className="folder-label">All Chats</span>
+          </button>
+          
+          <button className={`folder-vertical-btn ${sidebarTab === 'chats' && activeFolder === 'personal' ? 'active' : ''}`} onClick={() => { setSidebarTab('chats'); setActiveFolder('personal'); }}>
+            <div style={{ position: 'relative' }}>
+              <span className="folder-icon">📁</span>
+              <span className="vertical-badge">1</span>
+            </div>
+            <span className="folder-label">Shaxsiy</span>
+          </button>
+
+          <button className={`folder-vertical-btn ${sidebarTab === 'chats' && activeFolder === 'unread' ? 'active' : ''}`} onClick={() => { setSidebarTab('chats'); setActiveFolder('unread'); }}>
+            <div style={{ position: 'relative' }}>
+              <span className="folder-icon">📁</span>
+              <span className="vertical-badge">28</span>
+            </div>
+            <span className="folder-label">O'qilmagan</span>
+          </button>
+
+          <button className={`folder-vertical-btn ${sidebarTab === 'chats' && activeFolder === 'predictions' ? 'active' : ''}`} onClick={() => { setSidebarTab('chats'); setActiveFolder('predictions'); }}>
+            <span className="folder-icon">📁</span>
+            <span className="folder-label">Prognozlar</span>
+          </button>
+        </div>
+
+        {/* Bottom: Settings, Profile, Calls, Chats */}
+        <div className="folder-settings-vertical">
+          <button className={`folder-vertical-btn ${sidebarTab === 'profile' ? 'active' : ''}`} onClick={() => setSidebarTab('profile')} title="Profil">
+            {myAvatarUrl ? (
+              <img src={myAvatarUrl} alt="Profil" className="nav-profile-img" style={{ width: 24, height: 24, border: sidebarTab === 'profile' ? '1.5px solid #2aabee' : 'none' }} />
+            ) : (
+              <span className="folder-icon">👤</span>
+            )}
+          </button>
+          
+          <button className={`folder-vertical-btn ${sidebarTab === 'contacts' ? 'active' : ''}`} onClick={() => setSidebarTab('contacts')} title="Kontaktlar">
+            <span className="folder-icon">📞</span>
+          </button>
+
+          <button className={`folder-vertical-btn ${sidebarTab === 'chats' ? 'active' : ''}`} onClick={() => setSidebarTab('chats')} title="Chatlar">
+            <span className="folder-icon">💬</span>
+          </button>
+
+          <button className={`folder-vertical-btn ${sidebarTab === 'settings' ? 'active' : ''}`} onClick={() => setSidebarTab('settings')} title="Sozlamalar">
+            <span className="folder-icon">⚙️</span>
+          </button>
+        </div>
+      </div>
+
       {/* Main Sidebar Component - clean width on desktop */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`} style={{ display: 'flex', flexDirection: 'column', width: '100%', maxWidth: '380px' }}>
         
@@ -258,13 +321,19 @@ export default function Sidebar() {
               {/* Header */}
               <div className="sidebar-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <button className="icon-btn" onClick={() => setMenu(!menuOpen)}>
+                  <button className="icon-btn mobile-only-menu-btn" onClick={() => setMenu(!menuOpen)}>
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                   </button>
-                  <span className="sidebar-header-title">Telegram</span>
+                  <span className="sidebar-header-title">
+                    <span className="desktop-only-inline">Chats</span>
+                    <span className="mobile-only-inline">Telegram</span>
+                  </span>
                 </div>
                 <button className="icon-btn" onClick={() => setNewChatOpen(true)}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
                 </button>
               </div>
 
@@ -506,59 +575,113 @@ export default function Sidebar() {
             </>
           )}
 
-          {/* ──────────────── TAB 4: PROFILE ──────────────── */}
+          {/* ──────────────── TAB 4: PROFILE (Matching Screenshot 5) ──────────────── */}
           {sidebarTab === 'profile' && (
             <>
               {/* Header */}
-              <div className="sidebar-header">
+              <div className="sidebar-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span className="sidebar-header-title">Profil</span>
+                <button className="icon-btn" style={{ color: 'white' }}>⋮</button>
               </div>
 
-              <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', position: 'relative' }}>
                 {/* Profile header matching Screenshot 5 */}
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '16px 0' }}>
                   <div style={{ width: 100, height: 100, borderRadius: '50%', background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36, color: 'white', fontWeight: 'bold', overflow: 'hidden', position: 'relative' }}>
-                    R
-                    <span style={{ position: 'absolute', bottom: 0, right: 0, width: 24, height: 24, borderRadius: '50%', background: '#0088cc', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>📷</span>
+                    {myAvatarUrl ? (
+                      <img src={myAvatarUrl} alt="Profil" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : (
+                      user?.firstName ? user.firstName[0].toUpperCase() : 'R'
+                    )}
+                    <span style={{ position: 'absolute', bottom: 0, right: 0, width: 26, height: 26, borderRadius: '50%', background: '#2aabee', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, border: '2px solid #17212b', color: 'white', cursor: 'pointer' }}>📷</span>
                   </div>
-                  <span style={{ fontSize: 18, fontWeight: 'bold', color: 'white', marginTop: 12 }}>Rahmonbergan_oo4</span>
+                  <span style={{ fontSize: 18, fontWeight: 'bold', color: 'white', marginTop: 12 }}>{user?.username || 'Rahmonbergan_oo4'}</span>
                   <span style={{ fontSize: 13, color: '#4caf50', marginTop: 4 }}>onlayn</span>
                 </div>
 
-                {/* Profile actions */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, margin: '16px 0' }}>
-                  <button className="btn btn-primary" style={{ fontSize: 12.5, padding: '8px 12px' }}>Rasm belgilash</button>
-                  <button className="btn btn-ghost" style={{ fontSize: 12.5, padding: '8px 12px', border: '1px solid var(--border)' }}>Axborotni tahrirlash</button>
+                {/* Profile actions horizontal pill row matching Screenshot 5 */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, margin: '8px 0 16px' }}>
+                  <button className="profile-action-btn">
+                    <span style={{ fontSize: 16, marginBottom: 4 }}>📷</span>
+                    <span>Rasm belgilash</span>
+                  </button>
+                  <button className="profile-action-btn">
+                    <span style={{ fontSize: 16, marginBottom: 4 }}>✏️</span>
+                    <span>Tahrirlash</span>
+                  </button>
+                  <button className="profile-action-btn" onClick={() => setSidebarTab('settings')}>
+                    <span style={{ fontSize: 16, marginBottom: 4 }}>⚙️</span>
+                    <span>Sozlamalar</span>
+                  </button>
                 </div>
 
                 {/* Info blocks card matching Screenshot 5 */}
-                <div style={{ display: 'flex', flexDirection: 'column', background: '#17212b', borderRadius: 12, padding: '6px 0' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', background: '#17212b', borderRadius: 12, padding: '6px 0', border: '1px solid rgba(255,255,255,0.06)' }}>
                   
                   <div className="contact-row-special">
                     <div className="contact-special-icon" style={{ background: '#2aabee' }}>📞</div>
                     <div>
-                      <div style={{ fontSize: 14, color: 'white', fontWeight: 500 }}>+998 907012161</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>Mobil raqam</div>
+                      <div style={{ fontSize: 14.5, color: 'white', fontWeight: 500 }}>{user?.phone || '+998 907012161'}</div>
+                      <div style={{ fontSize: 12, color: '#7f91a4', marginTop: 1 }}>Mobil raqam</div>
                     </div>
                   </div>
 
-                  <div className="contact-row-special">
+                  <div className="contact-row-special" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                     <div className="contact-special-icon" style={{ background: '#9c27b0' }}>📧</div>
                     <div>
-                      <div style={{ fontSize: 14, color: 'white', fontWeight: 500 }}>@Rahmonbergan_oo4</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>Foydalanuvchi nomi</div>
+                      <div style={{ fontSize: 14.5, color: 'white', fontWeight: 500 }}>@{user?.username || 'Rahmonbergan_oo4'}</div>
+                      <div style={{ fontSize: 12, color: '#7f91a4', marginTop: 1 }}>Foydalanuvchi nomi</div>
                     </div>
                   </div>
 
-                  <div className="contact-row-special">
+                  <div className="contact-row-special" style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}>
                     <div className="contact-special-icon" style={{ background: '#ff9800' }}>🎂</div>
                     <div>
-                      <div style={{ fontSize: 14, color: 'white', fontWeight: 500 }}>dek 12, 2004 (21 yosh)</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>Tug&apos;ilgan kun</div>
+                      <div style={{ fontSize: 14.5, color: 'white', fontWeight: 500 }}>dek 12, 2004 (21 yosh)</div>
+                      <div style={{ fontSize: 12, color: '#7f91a4', marginTop: 1 }}>Tug&apos;ilgan kun</div>
                     </div>
                   </div>
 
                 </div>
+
+                {/* Profile Post Tabs matching Screenshot 5 */}
+                <div className="profile-tab-bar">
+                  <button className={`profile-tab-item ${profileActiveTab === 'posts' ? 'active' : ''}`} onClick={() => setProfileActiveTab('posts')}>
+                    Postlar
+                  </button>
+                  <button className={`profile-tab-item ${profileActiveTab === 'archived' ? 'active' : ''}`} onClick={() => setProfileActiveTab('archived')}>
+                    Arxivlangan postlar
+                  </button>
+                </div>
+
+                {/* Posts Grid matching Screenshot 5 */}
+                {profileActiveTab === 'posts' ? (
+                  <div className="profile-posts-grid">
+                    {[
+                      'https://images.unsplash.com/photo-1519501025264-65ba15a82390?w=300&auto=format&fit=crop&q=60',
+                      'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=300&auto=format&fit=crop&q=60',
+                      'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=300&auto=format&fit=crop&q=60'
+                    ].map((imgUrl, idx) => (
+                      <div key={idx} className="profile-post-item">
+                        <img src={imgUrl} alt={`Post ${idx}`} />
+                        <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 10 }}>📌</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px 0', textAlign: 'center', color: '#7f91a4', fontSize: 13 }}>
+                    Arxivlangan postlar yo&apos;q
+                  </div>
+                )}
+
+                {/* Floating Add Post Button matching Screenshot 5 */}
+                <div style={{ position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
+                  <button className="post-add-float-btn">
+                    <span>📷</span>
+                    <span style={{ fontWeight: 600 }}>Post qo&apos;shish</span>
+                  </button>
+                </div>
+
               </div>
             </>
           )}
@@ -568,37 +691,48 @@ export default function Sidebar() {
             
             {/* Chats tab */}
             <button className={`nav-item-btn ${sidebarTab === 'chats' ? 'active' : ''}`} onClick={() => setSidebarTab('chats')}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill={sidebarTab === 'chats' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              <span style={{ fontSize: 10, marginTop: 3 }}>Chatlar</span>
-              {/* Optional unread count badge */}
-              <span className="folder-tab-badge" style={{ position: 'absolute', top: 4, right: 26, fontSize: 8.5, padding: '1px 4px' }}>25</span>
+              <div className="nav-icon-wrapper">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill={sidebarTab === 'chats' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span className="folder-tab-badge" style={{ position: 'absolute', top: -3, right: -4, fontSize: 8.5, padding: '1px 4px' }}>25</span>
+              </div>
+              <span>Chatlar</span>
             </button>
 
             {/* Contacts tab */}
             <button className={`nav-item-btn ${sidebarTab === 'contacts' ? 'active' : ''}`} onClick={() => setSidebarTab('contacts')}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill={sidebarTab === 'contacts' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
-              </svg>
-              <span style={{ fontSize: 10, marginTop: 3 }}>Kontaktlar</span>
+              <div className="nav-icon-wrapper">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill={sidebarTab === 'contacts' ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+                </svg>
+              </div>
+              <span>Kontaktlar</span>
             </button>
 
             {/* Settings tab */}
             <button className={`nav-item-btn ${sidebarTab === 'settings' ? 'active' : ''}`} onClick={() => setSidebarTab('settings')}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span style={{ fontSize: 10, marginTop: 3 }}>Sozlamalar</span>
+              <div className="nav-icon-wrapper">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+              </div>
+              <span>Sozlamalar</span>
             </button>
 
             {/* Profile tab */}
             <button className={`nav-item-btn ${sidebarTab === 'profile' ? 'active' : ''}`} onClick={() => setSidebarTab('profile')}>
-              <div className="dialog-avatar avatar-gradient-3" style={{ width: 22, height: 22, fontSize: 9, fontWeight: 'bold' }}>
-                R
+              <div className="nav-icon-wrapper">
+                {myAvatarUrl ? (
+                  <img src={myAvatarUrl} alt="Profil" className="nav-profile-img" />
+                ) : (
+                  <div className="nav-profile-placeholder">
+                    {user?.firstName ? user.firstName[0].toUpperCase() : 'R'}
+                  </div>
+                )}
               </div>
-              <span style={{ fontSize: 10, marginTop: 3 }}>Profil</span>
+              <span>Profil</span>
             </button>
 
           </div>
