@@ -3,8 +3,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
-import { getDialogs, Dialog } from '@/lib/telegram/dialogs';
+import {
+  getDialogs, Dialog,
+  getStories, getCallHistory,
+  TelegramStoryItem, TelegramCallItem
+} from '@/lib/telegram/dialogs';
 import { logout, getCurrentUser } from '@/lib/telegram/auth';
+import { downloadStoryMedia, downloadProfilePhoto } from '@/lib/telegram/media';
 import { phoneCallManager } from '@/lib/webrtc/call-manager';
 import TelegramAvatar from './TelegramAvatar';
 
@@ -18,62 +23,60 @@ function formatTime(ts?: number) {
   return d.toLocaleDateString('ru', { day: '2-digit', month: '2-digit' });
 }
 
-// ── Stories Data matching user screenshot exactly ──────────
-interface Story {
-  id: string;
-  name: string;
-  avatar: string;
-  media: string[];
-  timestamp: string;
-  hasUnread: boolean;
-}
-
-const STORIES_DATA: Story[] = [
+// ── High-Fidelity Uzbek mock stories fallback (matching user screenshots) ──
+const MOCK_STORIES: TelegramStoryItem[] = [
   {
     id: 'asad',
+    storyId: 9991,
     name: 'Asad',
     avatar: '/stories/asad_avatar.png',
-    media: ['/stories/asad_content.png'],
+    media: '/stories/asad_content.png', // static file path directly
     timestamp: '12 hours ago',
     hasUnread: true,
+    caption: 'Ayol mayli degan joyida...'
   },
   {
     id: 'husnid',
+    storyId: 9992,
     name: 'Husnid A...',
     avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-    media: ['https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=600'],
+    media: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=600',
     timestamp: '5 hours ago',
     hasUnread: true,
   },
   {
     id: 'laboy',
+    storyId: 9993,
     name: 'Labo\'y Ur...',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
-    media: ['https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=600'],
+    media: 'https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=600',
     timestamp: '2 hours ago',
     hasUnread: true,
   },
   {
     id: 'ilhom',
+    storyId: 9994,
     name: 'ILHOM A...',
     avatar: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=150',
-    media: ['https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600'],
+    media: 'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600',
     timestamp: '10 hours ago',
     hasUnread: true,
   },
   {
     id: 'tumur',
+    storyId: 9995,
     name: 'Tumur ak...',
     avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
-    media: ['https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=600'],
+    media: 'https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=600',
     timestamp: '1 day ago',
     hasUnread: true,
   },
   {
     id: 'ogiljan',
+    storyId: 9996,
     name: 'O\'giljan Yer...',
     avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150',
-    media: ['https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600'],
+    media: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600',
     timestamp: '18 hours ago',
     hasUnread: true,
   },
@@ -99,12 +102,20 @@ export default function Sidebar() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
 
+  // ── Stories and Calls state ────────────────────────────────
+  const [stories, setStories] = useState<TelegramStoryItem[]>([]);
+  const [calls, setCalls] = useState<TelegramCallItem[]>([]);
+  const [storiesLoading, setStoriesLoading] = useState(true);
+  const [callsLoading, setCallsLoading] = useState(false);
+
   // ── Story Viewer States ──────────────────────────────────
   const [selectedStoryIndex, setSelectedStoryIndex] = useState<number | null>(null);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [storyProgress, setStoryProgress] = useState(0);
   const [replyText, setReplyText] = useState('');
   const [isLiked, setIsLiked] = useState(false);
+  const [downloadedMediaUrl, setDownloadedMediaUrl] = useState<string | null>(null);
+  const [mediaDownloading, setMediaDownloading] = useState(false);
   const progressIntervalRef = useRef<any>(null);
 
   const handleStartNewChat = async (e: React.FormEvent) => {
@@ -144,7 +155,60 @@ export default function Sidebar() {
     }
   }, [setDialogs]);
 
-  useEffect(() => { loadDialogs(); }, [loadDialogs]);
+  // ── Fetch dynamic stories from Telegram API ──────────────
+  const loadStories = useCallback(async () => {
+    setStoriesLoading(true);
+    try {
+      const apiStories = await getStories();
+      
+      // Load profile photos dynamically for real stories
+      const storiesWithAvatars = await Promise.all(
+        apiStories.map(async (story) => {
+          const photoUrl = await downloadProfilePhoto(story.id);
+          return {
+            ...story,
+            avatar: photoUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+          };
+        })
+      );
+
+      // Hybrid strategy: fallback to Uzbek mocks if API returns no active stories
+      if (storiesWithAvatars.length > 0) {
+        setStories(storiesWithAvatars);
+      } else {
+        setStories(MOCK_STORIES);
+      }
+    } catch (e) {
+      console.error('[Sidebar] loadStories:', e);
+      setStories(MOCK_STORIES);
+    } finally {
+      setStoriesLoading(false);
+    }
+  }, []);
+
+  // ── Fetch Call History from Telegram API ─────────────────
+  const loadCallsHistory = useCallback(async () => {
+    setCallsLoading(true);
+    try {
+      const apiCalls = await getCallHistory(50);
+      setCalls(apiCalls);
+    } catch (e) {
+      console.error('[Sidebar] loadCallsHistory:', e);
+    } finally {
+      setCallsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDialogs();
+    loadStories();
+  }, [loadDialogs, loadStories]);
+
+  useEffect(() => {
+    if (sidebarTab === 'calls') {
+      loadCallsHistory();
+    }
+  }, [sidebarTab, loadCallsHistory]);
 
   const folderFiltered = dialogs.filter(d => {
     if (activeFolder === 'personal') return d.type === 'user' || d.type === 'bot';
@@ -178,41 +242,69 @@ export default function Sidebar() {
     setStoryProgress(0);
     setReplyText('');
     setIsLiked(false);
+    setDownloadedMediaUrl(null);
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
   }, []);
 
   const handleNextStory = useCallback(() => {
     if (selectedStoryIndex === null) return;
-    const currentStory = STORIES_DATA[selectedStoryIndex];
-    if (activeMediaIndex < currentStory.media.length - 1) {
-      setActiveMediaIndex(prev => prev + 1);
-      setStoryProgress(0);
-    } else if (selectedStoryIndex < STORIES_DATA.length - 1) {
+    if (selectedStoryIndex < stories.length - 1) {
       setSelectedStoryIndex(prev => (prev as number) + 1);
       setActiveMediaIndex(0);
       setStoryProgress(0);
+      setDownloadedMediaUrl(null);
     } else {
       closeStoryViewer();
     }
-  }, [selectedStoryIndex, activeMediaIndex, closeStoryViewer]);
+  }, [selectedStoryIndex, stories.length, closeStoryViewer]);
 
   const handlePrevStory = useCallback(() => {
     if (selectedStoryIndex === null) return;
-    if (activeMediaIndex > 0) {
-      setActiveMediaIndex(prev => prev - 1);
-      setStoryProgress(0);
-    } else if (selectedStoryIndex > 0) {
+    if (selectedStoryIndex > 0) {
       setSelectedStoryIndex(prev => (prev as number) - 1);
-      const prevStory = STORIES_DATA[(selectedStoryIndex as number) - 1];
-      setActiveMediaIndex(prevStory.media.length - 1);
+      setActiveMediaIndex(0);
       setStoryProgress(0);
+      setDownloadedMediaUrl(null);
     } else {
       setStoryProgress(0);
     }
-  }, [selectedStoryIndex, activeMediaIndex]);
+  }, [selectedStoryIndex]);
 
+  // Progressive story media downloader
   useEffect(() => {
     if (selectedStoryIndex === null) return;
+    const currentStory = stories[selectedStoryIndex];
+    if (!currentStory) return;
+
+    // If it's a fallback mock story (has string path), display immediately
+    if (typeof currentStory.media === 'string') {
+      setDownloadedMediaUrl(currentStory.media);
+      setMediaDownloading(false);
+      return;
+    }
+
+    // Otherwise download active MTProto binary media dynamically from API
+    setMediaDownloading(true);
+    setDownloadedMediaUrl(null);
+    downloadStoryMedia(currentStory.id, currentStory.storyId, currentStory.media)
+      .then((url) => {
+        if (url) {
+          setDownloadedMediaUrl(url);
+        } else {
+          setDownloadedMediaUrl('https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600');
+        }
+      })
+      .catch(() => {
+        setDownloadedMediaUrl('https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600');
+      })
+      .finally(() => {
+        setMediaDownloading(false);
+      });
+  }, [selectedStoryIndex, stories]);
+
+  // Animate progress segment line
+  useEffect(() => {
+    if (selectedStoryIndex === null || mediaDownloading || !downloadedMediaUrl) return;
     setStoryProgress(0);
     if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
 
@@ -230,9 +322,9 @@ export default function Sidebar() {
     }, stepMs);
 
     return () => { if (progressIntervalRef.current) clearInterval(progressIntervalRef.current); };
-  }, [selectedStoryIndex, activeMediaIndex, handleNextStory]);
+  }, [selectedStoryIndex, mediaDownloading, downloadedMediaUrl, handleNextStory]);
 
-  const activeStory = selectedStoryIndex !== null ? STORIES_DATA[selectedStoryIndex] : null;
+  const activeStory = selectedStoryIndex !== null ? stories[selectedStoryIndex] : null;
 
   return (
     <>
@@ -337,10 +429,10 @@ export default function Sidebar() {
           {/* TAB 1: Chats */}
           {sidebarTab === 'chats' && (
             <>
-              {/* Stories horizontal slider bar (matching user's stories list) */}
-              {STORIES_DATA.length > 0 && (
+              {/* Stories horizontal slider bar */}
+              {stories.length > 0 && (
                 <div className="stories-container">
-                  {STORIES_DATA.map((s, index) => (
+                  {stories.map((s, index) => (
                     <div key={s.id} className="story-item" onClick={() => {
                       setSelectedStoryIndex(index);
                       setActiveMediaIndex(0);
@@ -348,11 +440,7 @@ export default function Sidebar() {
                     }}>
                       <div className="story-avatar-wrap">
                         <div className="story-avatar-border">
-                          {s.id === 'asad' ? (
-                            <img src={s.avatar} alt="Asad" style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover' }} />
-                          ) : (
-                            <img src={s.avatar} alt={s.name} style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover' }} />
-                          )}
+                          <img src={s.avatar} alt={s.name} style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover' }} />
                         </div>
                       </div>
                       <span className="story-name">{s.name.split(' ')[0]}</span>
@@ -402,52 +490,50 @@ export default function Sidebar() {
           {/* TAB 2: Calls History */}
           {sidebarTab === 'calls' && (
             <div className="calls-list">
-              {dialogs
-                .filter(d => d.type === 'user' && d.name !== 'Saved Messages')
-                .slice(0, 10)
-                .map((d, index) => {
-                  const types: ('incoming' | 'outgoing' | 'missed')[] = ['outgoing', 'missed', 'incoming'];
-                  const callType = types[index % 3];
-                  const dates = ['Bugun, 12:55', 'Kecha, 12:27', '26 iyun, 10:28', '24 iyun, 15:40'];
-                  const callDate = dates[index % dates.length];
-                  const durations = ['2 daqiqa', '', '1 daqiqa 45s', '35 soniya'];
-                  const callDuration = durations[index % durations.length];
-
-                  return (
-                    <div key={d.id} className="call-item">
-                      <div className="call-item-left">
-                        <TelegramAvatar id={d.id} name={d.name} type={d.type} size={42} />
-                        <div className="call-info">
-                          <span className="call-name">{d.name}</span>
-                          <div className={`call-meta ${callType === 'missed' ? 'missed' : ''}`}>
-                            {callType === 'outgoing' ? (
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <line x1="7" y1="17" x2="17" y2="7"></line>
-                                <polyline points="7 7 17 7 17 17"></polyline>
-                              </svg>
-                            ) : callType === 'incoming' ? (
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <line x1="17" y1="17" x2="7" y2="7"></line>
-                                <polyline points="7 17 7 7 17 7"></polyline>
-                              </svg>
-                            ) : (
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <line x1="18" y1="6" x2="6" y2="18"></line>
-                                <line x1="6" y1="6" x2="18" y2="18"></line>
-                              </svg>
-                            )}
-                            <span>{callDate} {callDuration ? `(${callDuration})` : ''}</span>
-                          </div>
+              {callsLoading ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  Yuklanmoqda...
+                </div>
+              ) : calls.length === 0 ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                  Qo'ng'iroqlar tarixi yo'q
+                </div>
+              ) : (
+                calls.map((c) => (
+                  <div key={c.id} className="call-item">
+                    <div className="call-item-left">
+                      <TelegramAvatar id={c.userId} name={c.name} type="user" size={42} />
+                      <div className="call-info">
+                        <span className="call-name">{c.name}</span>
+                        <div className={`call-meta ${c.type === 'missed' ? 'missed' : ''}`}>
+                          {c.type === 'outgoing' ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <line x1="7" y1="17" x2="17" y2="7"></line>
+                              <polyline points="7 7 17 7 17 17"></polyline>
+                            </svg>
+                          ) : c.type === 'incoming' ? (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <line x1="17" y1="17" x2="7" y2="7"></line>
+                              <polyline points="7 17 7 7 17 7"></polyline>
+                            </svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <line x1="18" y1="6" x2="6" y2="18"></line>
+                              <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                          )}
+                          <span>{c.dateText} {c.durationText ? `(${c.durationText})` : ''}</span>
                         </div>
                       </div>
-                      <button className="call-action-btn" onClick={() => startCall(d.id)} title="Qayta qo'ng'iroq">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-                        </svg>
-                      </button>
                     </div>
-                  );
-                })}
+                    <button className="call-action-btn" onClick={() => startCall(c.userId)} title="Qayta qo'ng'iroq">
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                      </svg>
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           )}
 
@@ -501,15 +587,13 @@ export default function Sidebar() {
 
             {/* Segment progress indicators */}
             <div className="story-viewer-progress-bars">
-              {activeStory.media.map((_, i) => (
-                <div key={i} className="story-viewer-progress-track">
-                  <div className="story-viewer-progress-fill"
-                    style={{
-                      width: i < activeMediaIndex ? '100%' : i === activeMediaIndex ? `${storyProgress}%` : '0%',
-                    }}
-                  />
-                </div>
-              ))}
+              <div className="story-viewer-progress-track">
+                <div className="story-viewer-progress-fill"
+                  style={{
+                    width: `${storyProgress}%`,
+                  }}
+                />
+              </div>
             </div>
 
             {/* Header info (Name, timestamp, actions) */}
@@ -537,9 +621,19 @@ export default function Sidebar() {
               </div>
             </div>
 
-            {/* Story Image Content */}
+            {/* Story Content Area */}
             <div className="story-viewer-media">
-              <img className="story-viewer-img" src={activeStory.media[activeMediaIndex]} alt="Story media content" />
+              {mediaDownloading ? (
+                <div style={{ color: 'white', display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'center' }}>
+                  {/* Premium Spinner */}
+                  <div className="spinner" style={{ width: 40, height: 40, border: '3px solid rgba(255,255,255,0.1)', borderTopColor: 'var(--accent)', borderRadius: '50%' }} />
+                  <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Yuklanmoqda...</span>
+                </div>
+              ) : downloadedMediaUrl ? (
+                <img className="story-viewer-img" src={downloadedMediaUrl} alt="Story content" />
+              ) : (
+                <div style={{ color: 'white', fontSize: 13 }}>Yuklash muvaffaqiyatsiz tugadi</div>
+              )}
             </div>
 
             {/* Footer options (reply, like, share) */}
@@ -552,7 +646,6 @@ export default function Sidebar() {
                   value={replyText}
                   onChange={e => setReplyText(e.target.value)}
                 />
-                {/* Paperclip reply media icon */}
                 <div className="story-viewer-input-icon">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />

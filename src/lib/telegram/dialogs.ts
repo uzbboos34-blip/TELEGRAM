@@ -222,3 +222,208 @@ export async function searchAndCreateChat(query: string): Promise<Dialog | null>
   }
 }
 
+// ── 1. Real Call History from Telegram API ─────────────────
+export interface TelegramCallItem {
+  id: string;
+  userId: string;
+  name: string;
+  type: 'incoming' | 'outgoing' | 'missed';
+  dateText: string;
+  durationText?: string;
+  timestamp: number;
+}
+
+export async function getCallHistory(limit = 50): Promise<TelegramCallItem[]> {
+  try {
+    const client = await getTelegramClient();
+    const { Api } = await import('telegram');
+    const bigInt = (await import('big-integer')).default;
+    const { getCachedPeer } = await import('./peer-cache');
+
+    const result = await client.invoke(
+      new Api.messages.Search({
+        peer: new Api.InputPeerEmpty(),
+        q: '',
+        filter: new Api.InputMessagesFilterPhoneCalls({}),
+        minDate: 0,
+        maxDate: 0,
+        offsetId: 0,
+        addOffset: 0,
+        limit,
+        maxId: 0,
+        minId: 0,
+        hash: bigInt(0) as any,
+      })
+    );
+
+    if (!result || !(result as any).messages) return [];
+
+    const messages = (result as any).messages;
+    const users = (result as any).users || [];
+    const userMap = new Map<string, any>();
+    for (const u of users) {
+      if (u.id) userMap.set(u.id.toString(), u);
+    }
+
+    const calls: TelegramCallItem[] = [];
+
+    for (const msg of messages) {
+      if (msg.action && msg.action.className === 'MessageActionPhoneCall') {
+        const action = msg.action;
+        const out = msg.out || false;
+
+        let peerId = '';
+        if (msg.peerId && msg.peerId.userId) {
+          peerId = msg.peerId.userId.toString();
+        } else if (msg.fromId && msg.fromId.userId) {
+          peerId = msg.fromId.userId.toString();
+        }
+
+        if (!peerId) continue;
+
+        const userObj = userMap.get(peerId);
+        let name = 'User ID: ' + peerId;
+        if (userObj) {
+          name = userObj.title || `${userObj.firstName || ''} ${userObj.lastName || ''}`.trim() || 'Unknown';
+          cachePeer(peerId, {
+            id: peerId,
+            type: 'user',
+            inputEntity: userObj,
+            name,
+            isOnline: false,
+          });
+        } else {
+          const cached = getCachedPeer(peerId);
+          if (cached) name = cached.name;
+        }
+
+        // Determine call type
+        let type: 'incoming' | 'outgoing' | 'missed' = 'incoming';
+        if (out) {
+          type = 'outgoing';
+        } else {
+          const reasonClass = action.reason?.className || '';
+          if (reasonClass.includes('Missed') || reasonClass.includes('Busy') || reasonClass.includes('Disconnect')) {
+            type = 'missed';
+          }
+        }
+
+        // Format duration
+        let durationText = '';
+        if (action.duration) {
+          const m = Math.floor(action.duration / 60);
+          const s = action.duration % 60;
+          durationText = m > 0 ? `${m}m ${s}s` : `${s}s`;
+        }
+
+        // Format Date text
+        const d = new Date(msg.date * 1000);
+        const dateText = d.toLocaleString('ru', {
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
+        calls.push({
+          id: msg.id.toString(),
+          userId: peerId,
+          name,
+          type,
+          dateText,
+          durationText,
+          timestamp: msg.date,
+        });
+      }
+    }
+
+    return calls;
+  } catch (err) {
+    console.error('[CallHistory] Error getting call history:', err);
+    return [];
+  }
+}
+
+// ── 2. Real Stories from Telegram API ──────────────────────
+export interface TelegramStoryItem {
+  id: string; // Peer ID
+  storyId: number;
+  name: string;
+  avatar: string; // profile photo blob URL or ''
+  media: any; // Raw media object to download via downloadStoryMedia
+  timestamp: string;
+  hasUnread: boolean;
+  caption?: string;
+}
+
+export async function getStories(): Promise<TelegramStoryItem[]> {
+  try {
+    const client = await getTelegramClient();
+    const { Api } = await import('telegram');
+
+    const result = await client.invoke(new Api.stories.GetAllStories({}));
+    if (!result || !(result as any).peerStories) return [];
+
+    const peerStoriesList = (result as any).peerStories;
+    const users = (result as any).users || [];
+    const chats = (result as any).chats || [];
+
+    const entityMap = new Map<string, any>();
+    for (const u of users) if (u.id) entityMap.set(u.id.toString(), { name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || 'User', entity: u, type: 'user' });
+    for (const c of chats) if (c.id) entityMap.set(c.id.toString(), { name: c.title || 'Chat', entity: c, type: c.className === 'Channel' ? 'channel' : 'group' });
+
+    const stories: TelegramStoryItem[] = [];
+
+    for (const ps of peerStoriesList) {
+      let peerId = '';
+      if (ps.peer && ps.peer.userId) {
+        peerId = ps.peer.userId.toString();
+      } else if (ps.peer && ps.peer.channelId) {
+        peerId = ps.peer.channelId.toString();
+      }
+
+      if (!peerId) continue;
+      const entityInfo = entityMap.get(peerId);
+      if (!entityInfo) continue;
+
+      // Extract stories from this peer
+      const items = ps.stories || [];
+      for (const item of items) {
+        if (item.className === 'StoryItem') {
+          // Format timestamp
+          const diff = Date.now() - (item.date * 1000);
+          const hoursAgo = Math.floor(diff / 3600000);
+          let timestamp = `${hoursAgo} hours ago`;
+          if (hoursAgo < 1) timestamp = 'yaqinda';
+          else if (hoursAgo >= 24) timestamp = `${Math.floor(hoursAgo / 24)} days ago`;
+
+          // Cache the peer
+          cachePeer(peerId, {
+            id: peerId,
+            type: entityInfo.type,
+            inputEntity: entityInfo.entity,
+            name: entityInfo.name,
+            isOnline: false,
+          });
+
+          stories.push({
+            id: peerId,
+            storyId: item.id,
+            name: entityInfo.name,
+            avatar: '', // loaded asynchronously by avatar helper
+            media: item.media,
+            timestamp,
+            hasUnread: item.id > (ps.maxReadId || 0),
+            caption: item.caption,
+          });
+        }
+      }
+    }
+
+    return stories;
+  } catch (err) {
+    console.error('[Stories] Error fetching stories:', err);
+    return [];
+  }
+}
+

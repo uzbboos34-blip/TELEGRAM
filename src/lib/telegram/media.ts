@@ -184,10 +184,46 @@ export async function sendFileMessage(
   });
 }
 
+// ── Story mediani yuklash ──────────────────────────────────
+const storyMediaCache = new Map<string, string>(); // peerId_storyId -> blob URL
+
+export async function downloadStoryMedia(
+  peerId: string,
+  storyId: number,
+  mediaObj: any
+): Promise<string | null> {
+  const key = `${peerId}_${storyId}`;
+  if (storyMediaCache.has(key)) return storyMediaCache.get(key)!;
+
+  try {
+    const client = await getTelegramClient();
+    const data = await (client as any).downloadMedia(mediaObj, {
+      workers: 1,
+    });
+    if (!data?.length) return null;
+
+    let mime = 'image/jpeg';
+    if (mediaObj.document) {
+      mime = mediaObj.document.mimeType || 'video/mp4';
+    } else if (mediaObj.photo) {
+      mime = 'image/jpeg';
+    }
+
+    const url = URL.createObjectURL(new Blob([data], { type: mime }));
+    storyMediaCache.set(key, url);
+    return url;
+  } catch (err: any) {
+    console.warn('[Media] Story download error:', err?.message || err);
+    return null;
+  }
+}
+
 // ── Keshni tozalash ────────────────────────────────────────
 export function revokeMediaUrls() {
   for (const url of photoCache.values()) URL.revokeObjectURL(url);
   for (const url of profileCache.values()) URL.revokeObjectURL(url);
+  for (const url of storyMediaCache.values()) URL.revokeObjectURL(url);
   photoCache.clear();
   profileCache.clear();
+  storyMediaCache.clear();
 }
