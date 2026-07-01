@@ -1874,14 +1874,14 @@ body {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  background: var(--bg-primary);
+  background: #0e1621;
 }
 
 /* 3. Right Profile/Info Panel Drawer */
 .profile-info-drawer {
   width: 340px;
   height: 100%;
-  background: #17191d;
+  background: #17212b;
   border-left: 1.5px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1912,7 +1912,7 @@ body {
   justify-content: space-between;
   padding: 0 16px;
   border-bottom: 1.5px solid var(--border);
-  background: #17191d;
+  background: #17212b;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -2135,7 +2135,7 @@ body {
   align-items: center;
   gap: 12px;
   padding: 8px 16px;
-  background: #17191d;
+  background: #17212b;
   border-bottom: 1.5px solid var(--border);
   animation: slideUp var(--transition-fast) forwards;
   flex-shrink: 0;
@@ -2185,10 +2185,10 @@ body {
 
 /* Reply Block inside Message Bubble */
 .bubble-reply-preview {
-  background: rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.2);
   border-left: 2px solid var(--accent);
   padding: 4px 8px;
-  border-radius: 3px;
+  border-radius: 4px;
   margin-bottom: 6px;
   cursor: pointer;
   display: flex;
@@ -2213,6 +2213,36 @@ body {
 /* ── Hover Emoji Reactions UI ──────────────────────── */
 .message-row {
   position: relative;
+  display: flex;
+  margin-bottom: 10px;
+  padding: 0 12px;
+}
+
+.message-row.out {
+  justify-content: flex-end;
+}
+
+.message-row.in {
+  justify-content: flex-start;
+  gap: 8px; /* For avatars on the left in groups */
+}
+
+/* Sharp corner borders matching Telegram 1:1 */
+.message-row.in .message-bubble {
+  background: #182533;
+  border-radius: 12px 12px 12px 4px;
+  color: #ffffff;
+}
+
+.message-row.out .message-bubble {
+  background: #2b5278; /* standard blue-purple */
+  border-radius: 12px 12px 4px 12px;
+  color: #ffffff;
+}
+
+/* Customizable background options */
+.message-row.out .message-bubble.purple {
+  background: #794eb9 !important; /* purple theme outgoing bubble */
 }
 
 .hover-reactions-menu {
@@ -2236,11 +2266,11 @@ body {
 }
 
 .message-row.out .hover-reactions-menu {
-  right: 12px;
+  right: 16px;
 }
 
 .message-row.in .hover-reactions-menu {
-  left: 12px;
+  left: 56px; /* Offset to not cover avatars */
 }
 
 .reaction-emoji-btn {
@@ -2267,11 +2297,11 @@ body {
 }
 
 .message-row.out .message-reactions-list {
-  right: 12px;
+  right: 20px;
 }
 
 .message-row.in .message-reactions-list {
-  left: 12px;
+  left: 56px;
 }
 
 .reaction-pill {
@@ -2291,4 +2321,290 @@ body {
 
 .reaction-pill:hover {
   transform: translateY(-1px);
+}
+
+/* ── Doodle wallpaper background effect ───────────── */
+.messages-area {
+  position: relative;
+  background-color: #0e1621;
+  /* Telegram classic default dark blue/black cat/doodle wallpaper background */
+  background-image: radial-gradient(rgba(255,255,255,0.03) 1px, transparent 0),
+                    radial-gradient(rgba(255,255,255,0.03) 1px, transparent 0);
+  background-size: 24px 24px;
+  background-position: 0 0, 12px 12px;
+}
+
+/* ── Floating Capsule Input Bar 1:1 ────────────────── */
+.input-area {
+  background: transparent !important;
+  border-top: none !important;
+  padding: 8px 12px 16px !important;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.input-field-wrap-capsule {
+  background: #17212b;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 24px;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  padding: 4px 14px;
+  min-height: 44px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.input-send-circle-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #2aabee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(42, 171, 238, 0.4);
+  transition: background 0.2s, transform 0.1s;
+}
+
+.input-send-circle-btn:hover {
+  background: #2499d6;
+  transform: scale(1.02);
+}
+
+.input-send-circle-btn:active {
+  transform: scale(0.96);
+}
+
+/* ── Horizontal Folders Tab Bar (Scrollable) ────────── */
+.folders-horizontal-scroll {
+  display: flex;
+  overflow-x: auto;
+  gap: 6px;
+  padding: 6px 12px;
+  scrollbar-width: none;
+  background: #17212b;
+  border-bottom: 1.5px solid var(--border);
+}
+
+.folders-horizontal-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.folder-tab-pill {
+  padding: 5px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.folder-tab-pill:hover {
+  color: var(--text-primary);
+}
+
+.folder-tab-pill.active {
+  background: rgba(42, 171, 238, 0.15);
+  color: #2aabee;
+}
+
+.folder-tab-badge {
+  background: #2aabee;
+  color: #17212b;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.folder-tab-badge.muted {
+  background: rgba(255,255,255,0.15);
+  color: var(--text-secondary);
+}
+
+/* ── Group Pinned Message Banner ────────────────────── */
+.pinned-message-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background: rgba(23, 33, 43, 0.95);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  cursor: pointer;
+  z-index: 10;
+  flex-shrink: 0;
+  backdrop-filter: blur(10px);
+}
+
+.pinned-banner-content {
+  border-left: 2px solid #2aabee;
+  padding-left: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pinned-banner-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #2aabee;
+}
+
+.pinned-banner-text {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Photo bubble overlays & PDF documents ──────────── */
+.photo-bubble-wrapper {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 2px;
+  max-width: 320px;
+}
+
+.photo-time-overlay {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+}
+
+/* Custom PDF preview card layout matching Screenshot 8 */
+.pdf-preview-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.12);
+  width: 100%;
+  max-width: 340px;
+  margin: 4px 0;
+  border: 1px solid rgba(255,255,255,0.05);
+}
+
+.pdf-thumbnail {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: white;
+  flex-shrink: 0;
+}
+
+.pdf-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.pdf-icon-placeholder {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #2aabee;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.pdf-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pdf-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-size {
+  font-size: 11px;
+  color: rgba(255,255,255,0.6);
+  margin-top: 2px;
+}
+
+/* ── Context Menu items danger style override ───────── */
+.context-menu-item.danger:hover {
+  background: rgba(229, 57, 53, 0.1) !important;
+}
+
+/* Contacts layout */
+.contacts-section {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 0;
+}
+
+.contact-row-special {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.contact-row-special:hover {
+  background: var(--bg-hover);
+}
+
+.contact-special-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.contact-special-text {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.contacts-sort-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #2aabee;
+  padding: 8px 16px;
 }
