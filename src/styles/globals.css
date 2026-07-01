@@ -7,47 +7,49 @@
 
 /* ── CSS Variables ────────────────────────────── */
 :root {
-  /* Telegram Dark Theme Colors */
-  --bg-primary: #17212B;
-  --bg-secondary: #1C2733;
-  --bg-tertiary: #242F3D;
-  --bg-elevated: #2B5278;
-  --bg-surface: #1E2C3A;
-  --bg-input: #253340;
-  --bg-hover: rgba(255, 255, 255, 0.05);
-  --bg-active: rgba(255, 255, 255, 0.08);
-  --bg-selected: rgba(42, 171, 238, 0.15);
+  /* Telegram Premium Dark Theme Colors */
+  --bg-primary: #0e1621;
+  --bg-secondary: #17191d;
+  --bg-folder-sidebar: #0f1013;
+  --bg-chat-sidebar: #17191d;
+  --bg-tertiary: #242f3d;
+  --bg-elevated: #2b5278;
+  --bg-surface: #1e2c3a;
+  --bg-input: #252d37;
+  --bg-hover: rgba(255, 255, 255, 0.04);
+  --bg-active: rgba(255, 255, 255, 0.07);
+  --bg-selected: #202b36;
 
   /* Telegram Blue Accent */
-  --accent: #2AABEE;
-  --accent-hover: #29A0E0;
-  --accent-dark: #1A8FC4;
+  --accent: #2aabee;
+  --accent-hover: #29a0e0;
+  --accent-dark: #1a8fc4;
   --accent-light: rgba(42, 171, 238, 0.15);
 
   /* Text */
-  --text-primary: #FFFFFF;
-  --text-secondary: #7C9AB5;
-  --text-hint: #6D8CA4;
-  --text-link: #2AABEE;
-  --text-muted: #5A7A94;
+  --text-primary: #ffffff;
+  --text-secondary: #7c9ab5;
+  --text-hint: #6d8ca4;
+  --text-link: #2aabee;
+  --text-muted: #5a7a94;
 
   /* Message Bubbles */
-  --bubble-out: #2B5278;
-  --bubble-out-text: #FFFFFF;
+  --bubble-out: #2b5278;
+  --bubble-out-text: #ffffff;
   --bubble-in: #182533;
-  --bubble-in-text: #FFFFFF;
+  --bubble-in-text: #ffffff;
 
   /* Status Colors */
-  --online: #4DCA5B;
-  --read: #4DC6F5;
-  --unread-badge: #2AABEE;
-  --error: #E53935;
-  --warning: #FF9800;
+  --online: #4dca5b;
+  --read: #2aabee;
+  --unread-badge: #2aabee;
+  --error: #e53935;
+  --warning: #ff9800;
 
   /* Borders */
-  --border: rgba(255, 255, 255, 0.08);
-  --border-light: rgba(255, 255, 255, 0.05);
-  --divider: rgba(255, 255, 255, 0.06);
+  --border: #101115;
+  --border-light: #101115;
+  --divider: #101115;
 
   /* Shadows */
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -1192,4 +1194,300 @@ body {
 .p-lg { padding: var(--space-lg); }
 .text-center { text-align: center; }
 .text-sm { font-size: var(--font-size-sm); }
+
+/* =========================================================
+   TELEGRAM 1:1 LOOK AND FEEL ADDITIONS
+   ========================================================= */
+
+/* Double Sidebar Container Override */
+.sidebar {
+  width: var(--sidebar-width) !important;
+  max-width: 100vw;
+  height: 100%;
+  display: flex !important;
+  flex-direction: row !important;
+  background: var(--bg-folder-sidebar) !important;
+  border-right: 1px solid var(--border) !important;
+  overflow: hidden;
+}
+
+/* 1. Left Vertical Folder Sidebar */
+.folder-sidebar {
+  width: 72px;
+  height: 100%;
+  background: var(--bg-folder-sidebar);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  flex-shrink: 0;
+}
+
+.folder-items {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-item {
+  width: 60px;
+  height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.folder-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+}
+
+.folder-item.active {
+  color: var(--accent);
+}
+
+.folder-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 2px;
+}
+
+.folder-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  background: var(--accent);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--bg-folder-sidebar);
+  min-width: 15px;
+  text-align: center;
+}
+
+.folder-label {
+  font-size: 10px;
+  font-weight: 500;
+  max-width: 58px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.folder-bottom {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 2. Main Chat Sidebar (Right side of sidebar container) */
+.chat-sidebar-list-wrap {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-chat-sidebar);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Sidebar Header Styles */
+.sidebar-header {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1.5px solid var(--border);
+  background: var(--bg-chat-sidebar);
+}
+
+.sidebar-header-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.1px;
+}
+
+.compose-btn {
+  color: var(--accent);
+}
+.compose-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* Search bar styling */
+.sidebar .search-bar {
+  padding: 8px 12px;
+  background: var(--bg-chat-sidebar);
+  border-bottom: 1.5px solid var(--border);
+}
+
+.sidebar .search-input-wrap {
+  background: #182533 !important;
+  border-radius: 8px !important;
+  padding: 6px 10px !important;
+  border: 1px solid transparent;
+}
+
+.sidebar .search-input-wrap:focus-within {
+  border-color: var(--accent);
+}
+
+.sidebar .search-input {
+  font-size: 13.5px;
+}
+
+/* Bottom Navigation */
+.bottom-nav {
+  height: 48px;
+  background: #17191d;
+  border-top: 1.5px solid var(--border);
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  padding: 0 12px;
+  flex-shrink: 0;
+}
+
+.nav-item-btn {
+  background: none;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 38px;
+  border-radius: 6px;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+
+.nav-item-btn:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+}
+
+.nav-item-btn.active {
+  color: var(--accent);
+}
+
+.nav-profile-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Dialog Item Override */
+.dialog-item {
+  padding: 8px 12px !important;
+  gap: 12px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.015);
+}
+
+.dialog-item:hover {
+  background: var(--bg-hover) !important;
+}
+
+.dialog-item.active {
+  background: var(--bg-selected) !important;
+}
+
+.dialog-name {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  color: var(--text-primary);
+}
+
+.dialog-time {
+  font-size: 11px !important;
+  color: var(--text-secondary) !important;
+}
+
+.dialog-last-msg {
+  font-size: 12.5px !important;
+  color: #7c9ab5 !important;
+  line-height: 1.35;
+}
+
+.dialog-item.active .dialog-last-msg,
+.dialog-item.active .dialog-time {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+.unread-badge {
+  background: var(--accent) !important;
+  color: white !important;
+  font-size: 10px !important;
+  padding: 1px 6px !important;
+  min-width: 18px !important;
+  height: 18px !important;
+  border-radius: 9px !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+/* PDF/Document rendering */
+.document-msg {
+  color: #4dc6f5 !important;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.document-msg svg {
+  color: #4dc6f5;
+  flex-shrink: 0;
+}
+
+/* Outgoing Ticks styling */
+.ticks-wrap {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+}
+
+.ticks-wrap.read {
+  color: var(--accent) !important;
+}
+
+.ticks-wrap.sent {
+  color: var(--text-secondary) !important;
+}
+
+/* Pinned marker on the right */
+.pin-marker {
+  color: var(--text-hint);
+  opacity: 0.7;
+}
+
+.dialog-item.active .pin-marker {
+  color: white;
+}
 .text-xs { font-size: var(--font-size-xs); }

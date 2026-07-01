@@ -20,6 +20,9 @@ export interface Dialog {
   isMuted: boolean;
   type: 'user' | 'group' | 'channel' | 'bot';
   memberCount?: number;
+  lastMessageIsOutgoing?: boolean;
+  lastMessageRead?: boolean;
+  lastMessageIsDocument?: boolean;
 }
 
 export async function getDialogs(limit = 100): Promise<Dialog[]> {
@@ -74,6 +77,7 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
 
         // ── Oxirgi xabar ──────────────────────────────────
         let lastMessage = '';
+        let lastMessageIsDocument = false;
         if (d.message) {
           if (d.message.message) {
             if (d.message.message.startsWith('📞RC:') || d.message.message.startsWith('📞 RC:')) {
@@ -94,8 +98,11 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
                 lastMessage = '🎞️ GIF';
               else if (attrs.some((a: any) => a.className === 'DocumentAttributeSticker'))
                 lastMessage = '🎭 Sticker';
-              else
-                lastMessage = '📎 Fayl';
+              else {
+                lastMessageIsDocument = true;
+                const fileAttr = attrs.find((a: any) => a.className === 'DocumentAttributeFilename');
+                lastMessage = fileAttr?.fileName || '📎 Fayl';
+              }
             }
             else if (mc.includes('Sticker')) lastMessage = '🎭 Sticker';
             else if (mc.includes('Geo'))     lastMessage = '📍 Joylashuv';
@@ -114,6 +121,11 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
           }
         }
 
+        const lastMessageIsOutgoing = d.message?.out || false;
+        const lastMessageRead = lastMessageIsOutgoing
+          ? (d.message.id <= (d.dialog?.readOutboxMaxId ?? 0))
+          : true;
+
         dialogs.push({
           id,
           name: d.title || entity.firstName || 'Unknown',
@@ -127,6 +139,9 @@ export async function getDialogs(limit = 100): Promise<Dialog[]> {
           isMuted: false,
           type,
           memberCount,
+          lastMessageIsOutgoing,
+          lastMessageRead,
+          lastMessageIsDocument,
         });
       } catch (err) {
         console.warn('[Dialogs] Skipping dialog:', err);
