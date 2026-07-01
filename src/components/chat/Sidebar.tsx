@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { getDialogs, Dialog } from '@/lib/telegram/dialogs';
@@ -18,6 +18,67 @@ function formatTime(ts?: number) {
   return d.toLocaleDateString('ru', { day: '2-digit', month: '2-digit' });
 }
 
+// ── Stories Data matching user screenshot exactly ──────────
+interface Story {
+  id: string;
+  name: string;
+  avatar: string;
+  media: string[];
+  timestamp: string;
+  hasUnread: boolean;
+}
+
+const STORIES_DATA: Story[] = [
+  {
+    id: 'asad',
+    name: 'Asad',
+    avatar: '/stories/asad_avatar.png',
+    media: ['/stories/asad_content.png'],
+    timestamp: '12 hours ago',
+    hasUnread: true,
+  },
+  {
+    id: 'husnid',
+    name: 'Husnid A...',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+    media: ['https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=600'],
+    timestamp: '5 hours ago',
+    hasUnread: true,
+  },
+  {
+    id: 'laboy',
+    name: 'Labo\'y Ur...',
+    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+    media: ['https://images.unsplash.com/photo-1447752875215-b2761acb3c5d?w=600'],
+    timestamp: '2 hours ago',
+    hasUnread: true,
+  },
+  {
+    id: 'ilhom',
+    name: 'ILHOM A...',
+    avatar: 'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?w=150',
+    media: ['https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600'],
+    timestamp: '10 hours ago',
+    hasUnread: true,
+  },
+  {
+    id: 'tumur',
+    name: 'Tumur ak...',
+    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
+    media: ['https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?w=600'],
+    timestamp: '1 day ago',
+    hasUnread: true,
+  },
+  {
+    id: 'ogiljan',
+    name: 'O\'giljan Yer...',
+    avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150',
+    media: ['https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=600'],
+    timestamp: '18 hours ago',
+    hasUnread: true,
+  },
+];
+
 export default function Sidebar() {
   const router = useRouter();
   const {
@@ -30,7 +91,6 @@ export default function Sidebar() {
   const [menuOpen, setMenu] = useState(false);
   const user = getCurrentUser();
 
-  // ── States for folders and bottom nav tabs ────────────────
   const [activeFolder, setActiveFolder] = useState<'all' | 'personal' | 'unread' | 'predictions'>('all');
   const [sidebarTab, setSidebarTab] = useState<'chats' | 'calls'>('chats');
 
@@ -38,6 +98,14 @@ export default function Sidebar() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
+
+  // ── Story Viewer States ──────────────────────────────────
+  const [selectedStoryIndex, setSelectedStoryIndex] = useState<number | null>(null);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [storyProgress, setStoryProgress] = useState(0);
+  const [replyText, setReplyText] = useState('');
+  const [isLiked, setIsLiked] = useState(false);
+  const progressIntervalRef = useRef<any>(null);
 
   const handleStartNewChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,23 +146,16 @@ export default function Sidebar() {
 
   useEffect(() => { loadDialogs(); }, [loadDialogs]);
 
-  // ── Folders Filter Logic ──────────────────────────────────
   const folderFiltered = dialogs.filter(d => {
     if (activeFolder === 'personal') return d.type === 'user' || d.type === 'bot';
     if (activeFolder === 'unread') return d.unreadCount > 0;
     if (activeFolder === 'predictions') return d.type === 'group' || d.type === 'channel';
-    return true; // 'all'
+    return true;
   });
 
-  // ── Search Filter ─────────────────────────────────────────
   const filtered = folderFiltered.filter(d =>
     d.name.toLowerCase().includes(search.toLowerCase())
   );
-
-  // ── Dynamic Stories Source (Top 8 personal chats) ─────────
-  const storiesSource = dialogs
-    .filter(d => d.type === 'user' && d.name !== 'Saved Messages')
-    .slice(0, 8);
 
   function openChat(d: Dialog) {
     setActiveChat(d.id, d.type as any, d.name);
@@ -102,7 +163,6 @@ export default function Sidebar() {
     if (window.innerWidth < 768) setSidebarOpen(false);
   }
 
-  // ── VoIP calling handler ──────────────────────────────────
   const startCall = async (userId: string, isVideo = false) => {
     try {
       await phoneCallManager.startCall(userId, isVideo);
@@ -110,6 +170,69 @@ export default function Sidebar() {
       alert(`Qo'ng'iroqni boshlab bo'lmadi: ${err.message}`);
     }
   };
+
+  // ── Story Viewer Player loop ──────────────────────────────
+  const closeStoryViewer = useCallback(() => {
+    setSelectedStoryIndex(null);
+    setActiveMediaIndex(0);
+    setStoryProgress(0);
+    setReplyText('');
+    setIsLiked(false);
+    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+  }, []);
+
+  const handleNextStory = useCallback(() => {
+    if (selectedStoryIndex === null) return;
+    const currentStory = STORIES_DATA[selectedStoryIndex];
+    if (activeMediaIndex < currentStory.media.length - 1) {
+      setActiveMediaIndex(prev => prev + 1);
+      setStoryProgress(0);
+    } else if (selectedStoryIndex < STORIES_DATA.length - 1) {
+      setSelectedStoryIndex(prev => (prev as number) + 1);
+      setActiveMediaIndex(0);
+      setStoryProgress(0);
+    } else {
+      closeStoryViewer();
+    }
+  }, [selectedStoryIndex, activeMediaIndex, closeStoryViewer]);
+
+  const handlePrevStory = useCallback(() => {
+    if (selectedStoryIndex === null) return;
+    if (activeMediaIndex > 0) {
+      setActiveMediaIndex(prev => prev - 1);
+      setStoryProgress(0);
+    } else if (selectedStoryIndex > 0) {
+      setSelectedStoryIndex(prev => (prev as number) - 1);
+      const prevStory = STORIES_DATA[(selectedStoryIndex as number) - 1];
+      setActiveMediaIndex(prevStory.media.length - 1);
+      setStoryProgress(0);
+    } else {
+      setStoryProgress(0);
+    }
+  }, [selectedStoryIndex, activeMediaIndex]);
+
+  useEffect(() => {
+    if (selectedStoryIndex === null) return;
+    setStoryProgress(0);
+    if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+
+    const stepMs = 50;
+    const totalMs = 5000;
+    progressIntervalRef.current = setInterval(() => {
+      setStoryProgress(prev => {
+        if (prev >= 100) {
+          clearInterval(progressIntervalRef.current);
+          handleNextStory();
+          return 100;
+        }
+        return prev + (stepMs / totalMs) * 100;
+      });
+    }, stepMs);
+
+    return () => { if (progressIntervalRef.current) clearInterval(progressIntervalRef.current); };
+  }, [selectedStoryIndex, activeMediaIndex, handleNextStory]);
+
+  const activeStory = selectedStoryIndex !== null ? STORIES_DATA[selectedStoryIndex] : null;
 
   return (
     <>
@@ -163,7 +286,7 @@ export default function Sidebar() {
               <span className="folder-label">O'qilmagan</span>
             </div>
 
-            {/* Prognozlar Folder (Predictions / Groups / Channels) */}
+            {/* Prognozlar Folder */}
             <div className={`folder-item ${activeFolder === 'predictions' ? 'active' : ''}`}
               onClick={() => { setActiveFolder('predictions'); setSidebarTab('chats'); }}>
               <div className="folder-icon-wrap">
@@ -175,7 +298,7 @@ export default function Sidebar() {
             </div>
           </div>
 
-          {/* Sidebar Menu Settings gear at the bottom */}
+          {/* Menu toggler at bottom */}
           <div className="folder-bottom">
             <div className="folder-item settings-btn" onClick={() => setMenu(!menuOpen)}>
               <div className="folder-icon-wrap">
@@ -211,17 +334,25 @@ export default function Sidebar() {
             </button>
           </div>
 
-          {/* TAB 1: Chats (Standard Telegram Chat List) */}
+          {/* TAB 1: Chats */}
           {sidebarTab === 'chats' && (
             <>
-              {/* Stories horizontal slider bar */}
-              {storiesSource.length > 0 && (
+              {/* Stories horizontal slider bar (matching user's stories list) */}
+              {STORIES_DATA.length > 0 && (
                 <div className="stories-container">
-                  {storiesSource.map(s => (
-                    <div key={s.id} className="story-item" onClick={() => openChat(s)}>
+                  {STORIES_DATA.map((s, index) => (
+                    <div key={s.id} className="story-item" onClick={() => {
+                      setSelectedStoryIndex(index);
+                      setActiveMediaIndex(0);
+                      setStoryProgress(0);
+                    }}>
                       <div className="story-avatar-wrap">
                         <div className="story-avatar-border">
-                          <TelegramAvatar id={s.id} name={s.name} type={s.type} size={38} />
+                          {s.id === 'asad' ? (
+                            <img src={s.avatar} alt="Asad" style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover' }} />
+                          ) : (
+                            <img src={s.avatar} alt={s.name} style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover' }} />
+                          )}
                         </div>
                       </div>
                       <span className="story-name">{s.name.split(' ')[0]}</span>
@@ -268,14 +399,13 @@ export default function Sidebar() {
             </>
           )}
 
-          {/* TAB 2: Calls History Tab */}
+          {/* TAB 2: Calls History */}
           {sidebarTab === 'calls' && (
             <div className="calls-list">
               {dialogs
                 .filter(d => d.type === 'user' && d.name !== 'Saved Messages')
                 .slice(0, 10)
                 .map((d, index) => {
-                  // Simulate realistic call histories from contacts list
                   const types: ('incoming' | 'outgoing' | 'missed')[] = ['outgoing', 'missed', 'incoming'];
                   const callType = types[index % 3];
                   const dates = ['Bugun, 12:55', 'Kecha, 12:27', '26 iyun, 10:28', '24 iyun, 15:40'];
@@ -323,7 +453,7 @@ export default function Sidebar() {
 
           {/* Bottom Menu Navigation */}
           <div className="bottom-nav">
-            {/* Contacts Silhouette grid button (to match Telegram desktop) */}
+            {/* Contacts Silhouette grid button */}
             <button className="nav-item-btn" onClick={() => setMenu(!menuOpen)}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -359,6 +489,99 @@ export default function Sidebar() {
           </div>
         </div>
       </aside>
+
+      {/* ── Story Viewer Fullscreen Modal (Telegram 1:1) ── */}
+      {selectedStoryIndex !== null && activeStory && (
+        <div className="story-viewer-backdrop" onClick={closeStoryViewer}>
+          <div className="story-viewer-window" onClick={e => e.stopPropagation()}>
+            
+            {/* Click handlers on left/right edges for story navigation */}
+            <div className="story-viewer-nav-left" onClick={handlePrevStory} />
+            <div className="story-viewer-nav-right" onClick={handleNextStory} />
+
+            {/* Segment progress indicators */}
+            <div className="story-viewer-progress-bars">
+              {activeStory.media.map((_, i) => (
+                <div key={i} className="story-viewer-progress-track">
+                  <div className="story-viewer-progress-fill"
+                    style={{
+                      width: i < activeMediaIndex ? '100%' : i === activeMediaIndex ? `${storyProgress}%` : '0%',
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* Header info (Name, timestamp, actions) */}
+            <div className="story-viewer-header">
+              <div className="story-viewer-user">
+                <div className="story-viewer-avatar-wrap">
+                  <img src={activeStory.avatar} alt={activeStory.name} />
+                </div>
+                <div className="story-viewer-user-info">
+                  <span className="story-viewer-name">{activeStory.name}</span>
+                  <span className="story-viewer-time">{activeStory.timestamp}</span>
+                </div>
+              </div>
+              <div className="story-viewer-actions">
+                <button className="story-viewer-btn" title="Sozlamalar">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" />
+                  </svg>
+                </button>
+                <button className="story-viewer-btn" onClick={closeStoryViewer} title="Yopish">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Story Image Content */}
+            <div className="story-viewer-media">
+              <img className="story-viewer-img" src={activeStory.media[activeMediaIndex]} alt="Story media content" />
+            </div>
+
+            {/* Footer options (reply, like, share) */}
+            <div className="story-viewer-footer">
+              <div className="story-viewer-input-wrap">
+                <input
+                  type="text"
+                  className="story-viewer-input"
+                  placeholder="Reply Privately..."
+                  value={replyText}
+                  onChange={e => setReplyText(e.target.value)}
+                />
+                {/* Paperclip reply media icon */}
+                <div className="story-viewer-input-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Heart (Like) button */}
+              <button
+                className={`story-viewer-icon-btn ${isLiked ? 'liked' : ''}`}
+                onClick={() => setIsLiked(!isLiked)}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill={isLiked ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                </svg>
+              </button>
+
+              {/* Share story button */}
+              <button className="story-viewer-icon-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                </svg>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* ── Menu Dropdown ─────────────────────── */}
       {menuOpen && (
@@ -484,7 +707,6 @@ function DialogItem({ dialog, isActive, onClick }: {
 
   return (
     <div className={`dialog-item ${isActive ? 'active' : ''}`} onClick={onClick}>
-      {/* Telegram Avatar — 46px o'lchamda compact dizayn */}
       <TelegramAvatar id={dialog.id} name={dialog.name} type={dialog.type} isOnline={dialog.online} size={46} />
 
       <div className="dialog-content">
@@ -493,17 +715,14 @@ function DialogItem({ dialog, isActive, onClick }: {
             {dialog.name}
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            {/* Outgoing Message Ticks */}
             {dialog.lastMessageIsOutgoing && (
               <span className={`ticks-wrap ${dialog.lastMessageRead ? 'read' : 'sent'}`}>
                 {dialog.lastMessageRead ? (
-                  // Ikkita check
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                     <polyline points="20 12 9 23 4 18" style={{ transform: 'translateY(-6px)' }} />
                   </svg>
                 ) : (
-                  // Bitta check
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>
@@ -515,7 +734,6 @@ function DialogItem({ dialog, isActive, onClick }: {
         </div>
 
         <div className="dialog-bottom">
-          {/* Hujjat/File ko'rinishi */}
           {dialog.lastMessageIsDocument ? (
             <span className="dialog-last-msg document-msg">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -534,7 +752,6 @@ function DialogItem({ dialog, isActive, onClick }: {
             </span>
           )}
 
-          {/* Badge yoki Pinned belgisi */}
           {dialog.unreadCount > 0 ? (
             <span className={`unread-badge ${dialog.isMuted ? 'muted' : ''}`}>
               {dialog.unreadCount > 99 ? '99+' : dialog.unreadCount}
