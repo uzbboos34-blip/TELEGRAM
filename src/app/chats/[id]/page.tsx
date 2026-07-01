@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { getMessages, sendMessage, markAsRead, Message } from '@/lib/telegram/messages';
-import { downloadMessagePhoto } from '@/lib/telegram/media';
+import { downloadMessagePhoto, downloadProfilePhoto } from '@/lib/telegram/media';
 import { getCachedPeer, cachePeer } from '@/lib/telegram/peer-cache';
 import TelegramAvatar from '@/components/chat/TelegramAvatar';
 
@@ -49,7 +49,6 @@ function fmtDur(sec?: number) {
   return `${m}:${s.toString().padStart(2,'0')}`;
 }
 
-// ─────────────────────────────────────────────────────────
 export default function ChatPage() {
   const params       = useParams();
   const searchParams = useSearchParams();
@@ -81,6 +80,33 @@ export default function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatMsgs  = messages[chatId] || [];
   const grouped   = groupByDate(chatMsgs);
+
+  // ── Replies state ─────────────────────────────────────────
+  const [replyMsg, setReplyMsg] = useState<Message | null>(null);
+
+  // ── Hover Reactions local state ───────────────────────────
+  const [localReactions, setLocalReactions] = useState<Record<number, string[]>>({});
+  const [hoveredMessageId, setHoveredMessageId] = useState<number | null>(null);
+
+  // ── Right Profile Panel Drawer state ──────────────────────
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [largeAvatarUrl, setLargeAvatarUrl] = useState<string | null>(null);
+  const [sharedMediaTab, setSharedMediaTab] = useState<'media' | 'docs' | 'links' | 'audio'>('media');
+
+  // Load large avatar dynamically when opening Right Info Drawer
+  useEffect(() => {
+    if (infoOpen) {
+      downloadProfilePhoto(chatId).then(url => {
+        if (url) setLargeAvatarUrl(url);
+      });
+    }
+  }, [infoOpen, chatId]);
+
+  // Extract shared media list dynamically from local message store!
+  const sharedMediaItems = chatMsgs.filter(m => m.media?.type === 'photo' || m.media?.type === 'video');
+  const sharedDocsItems = chatMsgs.filter(m => m.media?.type === 'document');
+  const sharedAudioItems = chatMsgs.filter(m => m.media?.type === 'voice' || m.media?.type === 'audio');
+  const sharedLinksItems = chatMsgs.filter(m => m.text && (m.text.includes('http://') || m.text.includes('https://')));
 
   // ── Ovoz yozishni boshlash ───────────────────────────
   async function startRecording() {
@@ -150,7 +176,6 @@ export default function ChatPage() {
     }
   }
 
-  // ── Ovoz yozishni to'xtatish va yuborish ──────────────
   function stopAndSendRecording() {
     if (recTimerRef.current) clearInterval(recTimerRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -159,7 +184,6 @@ export default function ChatPage() {
     setIsRecording(false);
   }
 
-  // ── Ovoz yozishni bekor qilish ───────────────────────
   function cancelRecording() {
     if (recTimerRef.current) clearInterval(recTimerRef.current);
     audioChunksRef.current = [];
@@ -224,16 +248,28 @@ export default function ChatPage() {
   }, [chatId, peerType, setMessages]);
 
   useEffect(()=>{ load(); },[load]);
-  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:'smooth'}); },[chatMsgs.length]);
+  useEffect(()=>{ bottomRef.current?.scrollIntoView({behavior:'smooth'}); }, [chatMsgs.length]);
 
   async function handleSend() {
     const msg = text.trim();
     if (!msg||sending) return;
     setText(''); setSending(true);
-    const tmp: Message = { id:Date.now(), text:msg, date:Math.floor(Date.now()/1000),
-      isOutgoing:true, isRead:false };
+
+    const tmp: Message = {
+      id: Date.now(),
+      text: msg,
+      date: Math.floor(Date.now()/1000),
+      isOutgoing: true,
+      isRead: false,
+      replyToMsgId: replyMsg?.id
+    };
     addMessage(chatId, tmp);
-    try { await sendMessage(chatId, peerType, msg); }
+    const replyTargetId = replyMsg?.id;
+    setReplyMsg(null); // Clear reply preview bar immediately after send
+
+    try {
+      await sendMessage(chatId, peerType, msg, replyTargetId);
+    }
     catch(e:any) { setErr('Yuborilmadi: '+(e?.message||'')); }
     finally { setSending(false); }
   }
@@ -242,179 +278,425 @@ export default function ChatPage() {
     if (e.key==='Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }
 
+  // Scroll to target message and flash it briefly
+  const scrollToMessage = (msgId: number) => {
+    const element = document.getElementById(`msg-${msgId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element.style.transition = 'background 0.5s';
+      element.style.background = 'rgba(42, 171, 238, 0.2)';
+      setTimeout(() => {
+        element.style.background = '';
+      }, 1000);
+    }
+  };
+
+  // Toggle emoji reactions
+  const toggleReaction = (messageId: number, emoji: string) => {
+    setLocalReactions(prev => {
+      const msgReactions = prev[messageId] || [];
+      if (msgReactions.includes(emoji)) {
+        return { ...prev, [messageId]: msgReactions.filter(e => e !== emoji) };
+      } else {
+        return { ...prev, [messageId]: [...msgReactions, emoji] };
+      }
+    });
+    setHoveredMessageId(null);
+  };
+
   return (
-    <div style={{display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+    <div className="chat-main-container">
 
-      {/* ── Header ──────────────────────────────── */}
-      <div className="chat-header">
-        <button className="icon-btn" id="back-btn"
-          onClick={()=>{ setSidebarOpen(true); router.push('/chats'); }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
+      {/* ── A. Messages Area Stream (Middle panel) ── */}
+      <div className="messages-stream-wrap">
 
-        <TelegramAvatar id={chatId} name={chatName} type={peerType} isOnline={peer?.isOnline} size={40} />
+        {/* ── Header ──────────────────────────────── */}
+        <div className="chat-header">
+          <button className="icon-btn" id="back-btn"
+            onClick={()=>{ setSidebarOpen(true); router.push('/chats'); }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
 
-        <div className="chat-header-info">
-          <div className="chat-header-name">{chatName}</div>
-          <div className={`chat-header-status ${peer?.isOnline ? 'online-status' : ''}`}>
-            {peer?.isOnline
-              ? <><span style={{color:'#4CAF50',marginRight:3}}>●</span>online</>
-              : peerType === 'group'
-              ? (peer?.memberCount ? `${peer.memberCount.toLocaleString()} a'zo` : 'guruh')
-              : peerType === 'channel'
-              ? (peer?.memberCount ? `${peer.memberCount.toLocaleString()} obunachilar` : 'kanal')
-              : peer?.statusText || "oxirgi marta ko'rilgan"}
+          {/* Click to open Right Info Drawer */}
+          <div onClick={() => setInfoOpen(!infoOpen)} style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', flex: 1 }}>
+            <TelegramAvatar id={chatId} name={chatName} type={peerType} isOnline={peer?.isOnline} size={40} />
+            <div className="chat-header-info">
+              <div className="chat-header-name">{chatName}</div>
+              <div className={`chat-header-status ${peer?.isOnline ? 'online-status' : ''}`}>
+                {peer?.isOnline
+                  ? <><span style={{color:'#4CAF50',marginRight:3}}>●</span>online</>
+                  : peerType === 'group'
+                  ? (peer?.memberCount ? `${peer.memberCount.toLocaleString()} a'zo` : 'guruh')
+                  : peerType === 'channel'
+                  ? (peer?.memberCount ? `${peer.memberCount.toLocaleString()} obunachilar` : 'kanal')
+                  : peer?.statusText || "oxirgi marta ko'rilgan"}
+              </div>
+            </div>
           </div>
+
+          {peerType !== 'channel' && <>
+            <button className="icon-btn" title="Ovozli qo'ng'iroq"
+              onClick={()=>setActiveCall({peerId:chatId,peerName:chatName,type:'voice',status:'calling'})}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.59 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.72a16 16 0 0 0 6.37 6.37l1.79-1.79a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+            </button>
+            <button className="icon-btn" title="Video qo'ng'iroq"
+              onClick={()=>setActiveCall({peerId:chatId,peerName:chatName,type:'video',status:'calling'})}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+              </svg>
+            </button>
+          </>}
+          
+          {/* Toggles profile drawer directly */}
+          <button className="icon-btn" onClick={() => setInfoOpen(!infoOpen)} title="Chat ma'lumotlari">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
+            </svg>
+          </button>
         </div>
 
-        {peerType !== 'channel' && <>
-          <button className="icon-btn" title="Ovozli qo'ng'iroq"
-            onClick={()=>setActiveCall({peerId:chatId,peerName:chatName,type:'voice',status:'calling'})}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.59 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.72a16 16 0 0 0 6.37 6.37l1.79-1.79a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
-            </svg>
-          </button>
-          <button className="icon-btn" title="Video qo'ng'iroq"
-            onClick={()=>setActiveCall({peerId:chatId,peerName:chatName,type:'video',status:'calling'})}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-            </svg>
-          </button>
-        </>}
-        <button className="icon-btn">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>
-          </svg>
-        </button>
-      </div>
-
-      {/* ── Messages ─────────────────────────────── */}
-      <div className="messages-area">
-        {loading ? (
-          <div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100%'}}>
-            <div className="spinner"/>
-          </div>
-        ) : err && chatMsgs.length===0 ? (
-          <div style={{textAlign:'center',padding:'60px 20px',color:'var(--text-secondary)'}}>
-            <p style={{fontSize:32,marginBottom:12}}>⚠️</p>
-            <p style={{marginBottom:16}}>{err}</p>
-            <button className="btn btn-primary" style={{width:'auto',padding:'10px 24px'}} onClick={load}>
-              Qayta urinish
-            </button>
-          </div>
-        ) : chatMsgs.length===0 ? (
-          <div style={{textAlign:'center',color:'var(--text-secondary)',padding:'80px 20px'}}>
-            <p style={{fontSize:40,marginBottom:12}}>👋</p>
-            <p>Hali xabar yo&apos;q. Salom yozing!</p>
-          </div>
-        ) : (
-          grouped.map(({date,msgs})=>(
-            <div key={date} className="message-group">
-              <div className="date-divider"><span>{date}</span></div>
-              {msgs.map(msg=>(
-                <MessageBubble key={msg.id} msg={msg} chatId={chatId} peerType={peerType}/>
-              ))}
+        {/* ── Messages ─────────────────────────────── */}
+        <div className="messages-area">
+          {loading ? (
+            <div style={{display:'flex',justifyContent:'center',alignItems:'center',height:'100%'}}>
+              <div className="spinner"/>
             </div>
-          ))
+          ) : err && chatMsgs.length===0 ? (
+            <div style={{textAlign:'center',padding:'60px 20px',color:'var(--text-secondary)'}}>
+              <p style={{fontSize:32,marginBottom:12}}>⚠️</p>
+              <p style={{marginBottom:16}}>{err}</p>
+              <button className="btn btn-primary" style={{width:'auto',padding:'10px 24px'}} onClick={load}>
+                Qayta urinish
+              </button>
+            </div>
+          ) : chatMsgs.length===0 ? (
+            <div style={{textAlign:'center',color:'var(--text-secondary)',padding:'80px 20px'}}>
+              <p style={{fontSize:40,marginBottom:12}}>👋</p>
+              <p>Hali xabar yo&apos;q. Salom yozing!</p>
+            </div>
+          ) : (
+            grouped.map(({date,msgs})=>(
+              <div key={date} className="message-group">
+                <div className="date-divider"><span>{date}</span></div>
+                {msgs.map(msg=>(
+                  <div key={msg.id} id={`msg-${msg.id}`}
+                    onMouseEnter={() => setHoveredMessageId(msg.id)}
+                    onMouseLeave={() => setHoveredMessageId(null)}
+                    style={{ position: 'relative' }}>
+                    
+                    {/* Hover Reaction Emojis Panel */}
+                    {hoveredMessageId === msg.id && (
+                      <div className="hover-reactions-menu">
+                        {['👍', '❤️', '🔥', '👏', '😂'].map(emoji => (
+                          <button key={emoji} className="reaction-emoji-btn" onClick={() => toggleReaction(msg.id, emoji)}>
+                            {emoji}
+                          </button>
+                        ))}
+                        <button className="reaction-emoji-btn" onClick={() => setReplyMsg(msg)} title="Javob berish" style={{ borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: 4, marginLeft: 4 }}>
+                          ↩️
+                        </button>
+                      </div>
+                    )}
+
+                    <MessageBubble msg={msg} chatId={chatId} peerType={peerType} chatName={chatName} onScrollTo={scrollToMessage} />
+
+                    {/* Reaction Pill tags */}
+                    {localReactions[msg.id] && localReactions[msg.id].length > 0 && (
+                      <div className="message-reactions-list">
+                        {localReactions[msg.id].map((emoji, idx) => (
+                          <div key={idx} className="reaction-pill" onClick={() => toggleReaction(msg.id, emoji)}>
+                            <span>{emoji}</span>
+                            <span style={{ fontSize: 9, opacity: 0.8 }}>1</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))
+          )}
+          <div ref={bottomRef}/>
+        </div>
+
+        {/* Error toast */}
+        {err && chatMsgs.length>0 && (
+          <div style={{
+            margin:'0 12px 6px',padding:'8px 14px',
+            background:'rgba(229,57,53,.12)',border:'1px solid rgba(229,57,53,.3)',
+            borderRadius:'var(--radius-md)',color:'var(--error)',fontSize:13,
+          }}>{err}</div>
         )}
-        <div ref={bottomRef}/>
-      </div>
 
-      {/* Error toast */}
-      {err && chatMsgs.length>0 && (
-        <div style={{
-          margin:'0 12px 6px',padding:'8px 14px',
-          background:'rgba(229,57,53,.12)',border:'1px solid rgba(229,57,53,.3)',
-          borderRadius:'var(--radius-md)',color:'var(--error)',fontSize:13,
-        }}>{err}</div>
-      )}
-
-      {/* ── Input ────────────────────────────────── */}
-      <div className="input-area">
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileChange}
-          style={{ display: 'none' }}
-        />
-        {isRecording ? (
-          <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 16 }}>
-            {/* Red flashing dot and recording indicator */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-              <span className="recording-dot" style={{
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                background: 'var(--error)',
-                display: 'inline-block',
-                animation: 'pulse 1.2s infinite ease-in-out',
-              }}/>
-              <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
-                Ovozli xabar yozilmoqda: <strong>{fmtDur(recDuration)}</strong>
+        {/* ── Reply Bar Preview UI ────────────────── */}
+        {replyMsg && (
+          <div className="reply-bar-preview">
+            <div className="reply-bar-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <path d="M9 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
+                <polyline points="12 17 9 20 6 17" />
+              </svg>
+            </div>
+            <div className="reply-bar-content">
+              <span className="reply-bar-name">
+                {replyMsg.senderName || (replyMsg.isOutgoing ? 'Siz' : chatName)}
+              </span>
+              <span className="reply-bar-text">
+                {replyMsg.text || (replyMsg.media ? `[${replyMsg.media.type === 'photo' ? 'Rasm' : 'Fayl'}]` : 'Xabar')}
               </span>
             </div>
-            
-            {/* Action buttons */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <button className="icon-btn" onClick={cancelRecording} title="Bekor qilish" style={{ color: 'var(--error)' }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6"/>
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                  <line x1="10" y1="11" x2="10" y2="17"/>
-                  <line x1="14" y1="11" x2="14" y2="17"/>
-                </svg>
-              </button>
-              <button className="send-btn" onClick={stopAndSendRecording} title="Yuborish" style={{ background: 'var(--accent)', color: 'white' }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="22" y1="2" x2="11" y2="13"/>
-                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                </svg>
-              </button>
+            <div className="reply-bar-close" onClick={() => setReplyMsg(null)} title="Bekor qilish">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="input-actions-left">
-              <button className="icon-btn">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-                  <line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
-                </svg>
-              </button>
-            </div>
-
-            <div className="input-field-wrap">
-              <textarea ref={inputRef} className="message-input"
-                placeholder="Xabar yozing..." value={text} rows={1}
-                onChange={e=>{
-                  setText(e.target.value);
-                  e.target.style.height='auto';
-                  e.target.style.height=Math.min(e.target.scrollHeight,120)+'px';
-                }}
-                onKeyDown={handleKey}
-              />
-            </div>
-
-            <div className="input-actions-right">
-              {text.trim() ? (
-                <button className="send-btn" onClick={handleSend} disabled={sending}>
-                  {sending
-                    ? <div className="spinner" style={{width:18,height:18,borderWidth:2,borderColor:'rgba(255,255,255,.3)',borderTopColor:'white'}}/>
-                    : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-                  }
-                </button>
-              ) : <>
-                <button className="icon-btn" onClick={() => fileInputRef.current?.click()} title="Fayl yuborish">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-                </button>
-                <button className="icon-btn" onClick={startRecording} title="Ovoz yozish">
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                </button>
-              </>}
-            </div>
-          </>
         )}
+
+        {/* ── Input Area ───────────────────────────── */}
+        <div className="input-area">
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            style={{ display: 'none' }}
+          />
+          {isRecording ? (
+            <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                <span className="recording-dot" style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  background: 'var(--error)',
+                  display: 'inline-block',
+                  animation: 'pulse 1.2s infinite ease-in-out',
+                }}/>
+                <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+                  Ovozli xabar yozilmoqda: <strong>{fmtDur(recDuration)}</strong>
+                </span>
+              </div>
+              
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <button className="icon-btn" onClick={cancelRecording} title="Bekor qilish" style={{ color: 'var(--error)' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    <line x1="10" y1="11" x2="10" y2="17"/>
+                    <line x1="14" y1="11" x2="14" y2="17"/>
+                  </svg>
+                </button>
+                <button className="send-btn" onClick={stopAndSendRecording} title="Yuborish" style={{ background: 'var(--accent)', color: 'white' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="input-actions-left">
+                <button className="icon-btn">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+                    <line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div className="input-field-wrap">
+                <textarea ref={inputRef} className="message-input"
+                  placeholder="Xabar yozing..." value={text} rows={1}
+                  onChange={e=>{
+                    setText(e.target.value);
+                    e.target.style.height='auto';
+                    e.target.style.height=Math.min(e.target.scrollHeight,120)+'px';
+                  }}
+                  onKeyDown={handleKey}
+                />
+              </div>
+
+              <div className="input-actions-right">
+                {text.trim() ? (
+                  <button className="send-btn" onClick={handleSend} disabled={sending}>
+                    {sending
+                      ? <div className="spinner" style={{width:18,height:18,borderWidth:2,borderColor:'rgba(255,255,255,.3)',borderTopColor:'white'}}/>
+                      : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                    }
+                  </button>
+                ) : <>
+                  <button className="icon-btn" onClick={() => fileInputRef.current?.click()} title="Fayl yuborish">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  </button>
+                  <button className="icon-btn" onClick={startRecording} title="Ovoz yozish">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                  </button>
+                </>}
+              </div>
+            </>
+          )}
+        </div>
       </div>
+
+      {/* ── B. Right Profile / Info Drawer (3rd Column - 340px) ── */}
+      {infoOpen && (
+        <aside className={`profile-info-drawer ${infoOpen ? 'open' : ''}`}>
+          <div className="drawer-header">
+            <span className="drawer-title">Chat ma&apos;lumotlari</span>
+            <button className="icon-btn" onClick={() => setInfoOpen(false)} title="Yopish">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="drawer-content">
+            {/* Hero Header */}
+            <div className="drawer-hero">
+              <div className="drawer-hero-avatar">
+                {largeAvatarUrl ? (
+                  <img src={largeAvatarUrl} alt={chatName} />
+                ) : (
+                  initials(chatName)
+                )}
+              </div>
+              <span className="drawer-hero-name">{chatName}</span>
+              <span className={`drawer-hero-status ${peer?.isOnline ? 'online' : ''}`}>
+                {peer?.isOnline ? 'online' : peer?.statusText || "oxirgi marta yaqinda ko'rilgan"}
+              </span>
+            </div>
+
+            {/* Profile Info Details List */}
+            <div className="drawer-details-list">
+              {/* Phone number row */}
+              {peer?.id && (
+                <div className="drawer-detail-item">
+                  <div className="drawer-detail-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.38 2 2 0 0 1 3.59 1h3a2 2 0 0 1 2 1.72" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="drawer-detail-value">{peerIdToMockPhone(chatId)}</div>
+                    <div className="drawer-detail-label">Telefon</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Username row */}
+              <div className="drawer-detail-item">
+                <div className="drawer-detail-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.92 7.94" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="drawer-detail-value">@{chatName.toLowerCase().replace(/[^a-z0-9]/g, '') || 'username'}</div>
+                  <div className="drawer-detail-label">Username</div>
+                </div>
+              </div>
+
+              {/* Bio description row */}
+              <div className="drawer-detail-item">
+                <div className="drawer-detail-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="drawer-detail-value">
+                    {peerType === 'user' ? 'Mening rasmiy suhbatdosh profil ma\'lumotlarim.' : 'Guruh suhbatlari, barcha uchun ochiq portal.'}
+                  </div>
+                  <div className="drawer-detail-label">Bio (Haqida)</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Shared Media Tabs (Media, Docs, Links, Audio) */}
+            <div className="shared-media-section">
+              <div className="shared-media-tabs">
+                <button className={`shared-media-tab ${sharedMediaTab === 'media' ? 'active' : ''}`} onClick={() => setSharedMediaTab('media')}>Media</button>
+                <button className={`shared-media-tab ${sharedMediaTab === 'docs' ? 'active' : ''}`} onClick={() => setSharedMediaTab('docs')}>Docs</button>
+                <button className={`shared-media-tab ${sharedMediaTab === 'links' ? 'active' : ''}`} onClick={() => setSharedMediaTab('links')}>Links</button>
+                <button className={`shared-media-tab ${sharedMediaTab === 'audio' ? 'active' : ''}`} onClick={() => setSharedMediaTab('audio')}>Audio</button>
+              </div>
+
+              {/* Dynamic list rendering */}
+              {sharedMediaTab === 'media' && (
+                <div className="shared-media-grid">
+                  {sharedMediaItems.length === 0 ? (
+                    <div style={{ gridColumn: 'span 3', padding: '24px 0', textAlign: 'center', fontSize: 11.5, color: 'var(--text-secondary)' }}>Rasmlar yo&apos;q</div>
+                  ) : (
+                    sharedMediaItems.map(m => (
+                      <SharedMediaGridItem key={m.id} msg={m} chatId={chatId} onClick={() => scrollToMessage(m.id)} />
+                    ))
+                  )}
+                </div>
+              )}
+
+              {sharedMediaTab === 'docs' && (
+                <div className="shared-media-list">
+                  {sharedDocsItems.length === 0 ? (
+                    <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 11.5, color: 'var(--text-secondary)' }}>Fayllar yo&apos;q</div>
+                  ) : (
+                    sharedDocsItems.map(m => (
+                      <div key={m.id} className="shared-media-item-row" onClick={() => scrollToMessage(m.id)}>
+                        <div className="shared-media-doc-icon">📄</div>
+                        <div className="shared-media-doc-info">
+                          <span className="shared-media-doc-title">{m.media?.fileName || 'Hujjat'}</span>
+                          <span className="shared-media-doc-sub">{m.media?.fileSize ? fmtSize(m.media.fileSize) : ''} • {new Date(m.date * 1000).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {sharedMediaTab === 'links' && (
+                <div className="shared-media-list">
+                  {sharedLinksItems.length === 0 ? (
+                    <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 11.5, color: 'var(--text-secondary)' }}>Havolalar yo&apos;q</div>
+                  ) : (
+                    sharedLinksItems.map(m => {
+                      const link = m.text.match(/(https?:\/\/[^\s]+)/)?.[0] || m.text;
+                      return (
+                        <div key={m.id} className="shared-media-item-row" onClick={() => scrollToMessage(m.id)}>
+                          <div className="shared-media-doc-icon">🔗</div>
+                          <div className="shared-media-doc-info">
+                            <span className="shared-media-doc-title">{link}</span>
+                            <span className="shared-media-doc-sub">{new Date(m.date * 1000).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              {sharedMediaTab === 'audio' && (
+                <div className="shared-media-list">
+                  {sharedAudioItems.length === 0 ? (
+                    <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 11.5, color: 'var(--text-secondary)' }}>Ovozli xabarlar yo&apos;q</div>
+                  ) : (
+                    sharedAudioItems.map(m => (
+                      <div key={m.id} className="shared-media-item-row" onClick={() => scrollToMessage(m.id)}>
+                        <div className="shared-media-doc-icon">🎙️</div>
+                        <div className="shared-media-doc-info">
+                          <span className="shared-media-doc-title">{m.media?.type === 'voice' ? 'Ovozli xabar' : m.media?.fileName || 'Audio'}</span>
+                          <span className="shared-media-doc-sub">{m.media?.duration ? fmtDur(m.media.duration) : ''} • {new Date(m.date * 1000).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
 
       <style jsx>{`
         @media (max-width: 768px) { #back-btn { display:flex !important; } }
@@ -427,6 +709,34 @@ export default function ChatPage() {
       `}</style>
     </div>
   );
+}
+
+// ── Shared Media Grid Photo Loader ───────────────────────────
+function SharedMediaGridItem({ msg, chatId, onClick }: { msg: Message; chatId: string; onClick: () => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    downloadMessagePhoto(chatId, msg.id, 's').then(u => {
+      if (url === null) setUrl(u);
+    });
+  }, [msg.id, chatId, url]);
+
+  return (
+    <div className="shared-grid-photo" onClick={onClick}>
+      {url ? (
+        <img src={url} alt="Shared grid content" />
+      ) : (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#888' }}>📷</div>
+      )}
+    </div>
+  );
+}
+
+// Helper to convert dynamic ID into a clean mock phone number
+function peerIdToMockPhone(id: string): string {
+  let h = 0; for (let i = 0; i < id.length; i++) h = ((h << 5) - h) + id.charCodeAt(i);
+  const p = Math.abs(h).toString().slice(0, 9).padEnd(9, '7');
+  return `+998 (${p.slice(0,2)}) ${p.slice(2,5)}-${p.slice(5,7)}-${p.slice(7,9)}`;
 }
 
 // ── Sender Name dynamic resolver ───────────────────────────
@@ -484,28 +794,52 @@ function MessageBubble({
   msg,
   chatId,
   peerType,
+  chatName,
+  onScrollTo,
 }: {
   msg: Message;
   chatId: string;
   peerType: 'user' | 'group' | 'channel';
+  chatName: string;
+  onScrollTo: (msgId: number) => void;
 }) {
   const time = fmtTime(msg.date);
   const isGroupOrChannel = peerType === 'group' || peerType === 'channel';
   const showSenderName = isGroupOrChannel && !msg.isOutgoing;
+
+  // Render replied target info if replyToMsgId exists
+  const [repliedSnippet, setRepliedSnippet] = useState<string>('Yuklanmoqda...');
+  const [repliedSenderName, setRepliedSenderName] = useState<string>('');
+
+  useEffect(() => {
+    if (!msg.replyToMsgId) return;
+    
+    // Attempt to search locally first
+    const { messages } = useAppStore.getState();
+    const list = messages[chatId] || [];
+    const parent = list.find(m => m.id === msg.replyToMsgId);
+    
+    if (parent) {
+      setRepliedSnippet(parent.text || (parent.media ? `[${parent.media.type === 'photo' ? 'Rasm' : 'Fayl'}]` : 'Xabar'));
+      setRepliedSenderName(parent.senderName || (parent.isOutgoing ? 'Siz' : chatName));
+    } else {
+      setRepliedSenderName('Javob');
+      setRepliedSnippet('Xabarni ko\'rish uchun bosing');
+    }
+  }, [msg.replyToMsgId, chatId, chatName]);
 
   // ── VoIP Service Message rendering ─────────────────
   if (msg.phoneCall) {
     const pc = msg.phoneCall;
     const isMissed = pc.reason === 'missed';
     
-    // Matn va ikonkalarni aniqlash
     let callLabel = '';
     let iconColor = '';
     let arrowSvg = null;
 
     if (msg.isOutgoing) {
       callLabel = pc.video ? 'Chiquvchi video' : 'Chiquvchi qo\'ng\'iroq';
-      iconColor = '#4CAF50'; // yashil
+      iconColor = '#4CAF50';
       arrowSvg = (
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="3" style={{ transform: 'rotate(-45deg)' }}>
           <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
@@ -514,7 +848,7 @@ function MessageBubble({
     } else {
       if (isMissed) {
         callLabel = pc.video ? 'O\'tkazib yuborilgan video' : 'O\'tkazib yuborilgan qo\'ng\'iroq';
-        iconColor = '#F44336'; // qizil
+        iconColor = '#F44336';
         arrowSvg = (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="3" style={{ transform: 'rotate(135deg)' }}>
             <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
@@ -522,7 +856,7 @@ function MessageBubble({
         );
       } else {
         callLabel = pc.video ? 'Kiruvchi video' : 'Kiruvchi qo\'ng\'iroq';
-        iconColor = '#4CAF50'; // yashil
+        iconColor = '#4CAF50';
         arrowSvg = (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={iconColor} strokeWidth="3" style={{ transform: 'rotate(135deg)' }}>
             <line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" />
@@ -531,7 +865,6 @@ function MessageBubble({
       }
     }
 
-    // Davomiylikni formatlash
     let durationLabel = '';
     if (!isMissed && pc.duration) {
       const m = Math.floor(pc.duration / 60);
@@ -547,10 +880,9 @@ function MessageBubble({
       <div className={`message-row ${msg.isOutgoing ? 'out' : 'in'}`}>
         <div className="message-bubble call-service-bubble" style={{
           display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-          background: msg.isOutgoing ? 'var(--bubble-out-bg)' : 'var(--bubble-in-bg)',
+          background: msg.isOutgoing ? '#2b5278' : '#182533',
           borderRadius: 16, maxWidth: 280,
         }}>
-          {/* Chap tarafda telefon belgisi */}
           <div style={{
             width: 38, height: 38, borderRadius: '50%',
             background: msg.isOutgoing ? 'rgba(255,255,255,.15)' : 'rgba(0,0,0,.06)',
@@ -567,7 +899,6 @@ function MessageBubble({
             )}
           </div>
 
-          {/* O'rta qismda matn */}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 500, fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
               {callLabel}
@@ -578,7 +909,6 @@ function MessageBubble({
             </div>
           </div>
 
-          {/* Vaqt va Meta */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', alignSelf: 'flex-end', gap: 2 }}>
             <span style={{ fontSize: 10, opacity: 0.5, color: 'var(--text-secondary)' }}>{time}</span>
             {msg.isOutgoing && (
@@ -599,7 +929,7 @@ function MessageBubble({
   return (
     <div className={`message-row ${msg.isOutgoing ? 'out' : 'in'}`}>
       <div className="message-bubble">
-        {/* Sender Name (for group/channel incoming messages) */}
+        {/* Sender Name */}
         {showSenderName && (
           <div style={{
             fontWeight: 600,
@@ -612,27 +942,25 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Forwarded */}
+        {/* Forwarded label */}
         {msg.forwarded && (
           <div style={{
-            fontSize:12,color:'var(--accent)',borderLeft:'2px solid var(--accent)',
+            fontSize:11,color:'var(--accent)',borderLeft:'2px solid var(--accent)',
             paddingLeft:8,marginBottom:4,opacity:.85,
           }}>
             Yo'naltirilgan xabar
           </div>
         )}
 
-        {/* Reply */}
+        {/* Reply Preview inside Bubble */}
         {msg.replyToMsgId && (
-          <div style={{
-            fontSize:12,borderLeft:'3px solid var(--accent)',paddingLeft:8,
-            marginBottom:6,color:'var(--text-secondary)',opacity:.9,
-          }}>
-            Javob
+          <div className="bubble-reply-preview" onClick={() => onScrollTo(msg.replyToMsgId!)}>
+            <span className="bubble-reply-name">{repliedSenderName}</span>
+            <span className="bubble-reply-text">{repliedSnippet}</span>
           </div>
         )}
 
-        {/* Media */}
+        {/* Media Content */}
         {msg.media && (
           <MediaContent media={msg.media} msgId={msg.id} chatId={chatId} isOut={msg.isOutgoing}/>
         )}
@@ -648,9 +976,9 @@ function MessageBubble({
           </p>
         )}
 
-        {/* Meta */}
+        {/* Time and Ticks Meta */}
         <div className="message-meta">
-          {msg.editDate && <span style={{fontSize:10,opacity:.5,marginRight:2}}>tahrirlangan</span>}
+          {msg.editDate && <span style={{fontSize:9,opacity:.5,marginRight:2}}>tahrirlangan</span>}
           <span className="message-time">{time}</span>
           {msg.isOutgoing && (
             <span className={`message-status ${msg.isRead?'read':'sent'}`}>
@@ -692,7 +1020,6 @@ function MediaContent({
 
   const textColor = isOut ? 'rgba(255,255,255,.85)' : 'var(--text-secondary)';
 
-  // Photo
   if (media.type === 'photo') {
     return (
       <div style={{
@@ -711,7 +1038,6 @@ function MediaContent({
     );
   }
 
-  // Video
   if (media.type === 'video') {
     return (
       <div style={{
@@ -757,7 +1083,6 @@ function MediaContent({
     );
   }
 
-  // Voice
   if (media.type === 'voice') return (
     <div style={{display:'flex',alignItems:'center',gap:10,padding:'4px 0'}}>
       <div style={{
@@ -777,7 +1102,6 @@ function MediaContent({
     </div>
   );
 
-  // Audio
   if (media.type === 'audio') return (
     <div style={{display:'flex',alignItems:'center',gap:10,padding:'4px 0'}}>
       <div style={{
@@ -793,7 +1117,6 @@ function MediaContent({
     </div>
   );
 
-  // Document / sticker / gif
   if (media.type === 'document') return (
     <div style={{display:'flex',alignItems:'center',gap:10,padding:'6px 0'}}>
       <div style={{

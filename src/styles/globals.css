@@ -1852,3 +1852,443 @@ body {
   border-color: rgba(255, 59, 48, 0.3);
   background: rgba(255, 59, 48, 0.1);
 }
+
+/* =========================================================
+   THREE-COLUMN LAYOUT AND INTERACTIVE ELEMENTS (Telegram 1:1)
+   ========================================================= */
+
+/* Main Chat view containers */
+.chat-main-container {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.messages-stream-wrap {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  background: var(--bg-primary);
+}
+
+/* 3. Right Profile/Info Panel Drawer */
+.profile-info-drawer {
+  width: 340px;
+  height: 100%;
+  background: #17191d;
+  border-left: 1.5px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow-y: auto;
+  z-index: 30;
+  transition: transform var(--transition-normal);
+}
+
+@media (max-width: 1024px) {
+  .profile-info-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    height: 100%;
+    box-shadow: -5px 0 25px rgba(0, 0, 0, 0.5);
+    transform: translateX(100%);
+  }
+  .profile-info-drawer.open {
+    transform: translateX(0);
+  }
+}
+
+.drawer-header {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1.5px solid var(--border);
+  background: #17191d;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.drawer-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drawer-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.drawer-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-hero-avatar {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  margin-bottom: 12px;
+  font-size: 42px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: white;
+  overflow: hidden;
+}
+
+.drawer-hero-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.drawer-hero-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.drawer-hero-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.drawer-hero-status.online {
+  color: #4CAF50;
+}
+
+/* Drawer Detail Rows */
+.drawer-details-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-detail-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.drawer-detail-icon {
+  color: var(--text-secondary);
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.drawer-detail-value {
+  font-size: 13.5px;
+  color: var(--text-primary);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.drawer-detail-label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+/* Shared Media section */
+.shared-media-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shared-media-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+
+.shared-media-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 8px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-align: center;
+  border-bottom: 2px solid transparent;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.shared-media-tab:hover {
+  color: var(--text-primary);
+}
+
+.shared-media-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.shared-media-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 350px;
+  overflow-y: auto;
+  padding-top: 4px;
+}
+
+/* Grid for photos */
+.shared-media-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.shared-grid-photo {
+  aspect-ratio: 1;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  cursor: pointer;
+}
+
+.shared-grid-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shared-media-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.015);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.shared-media-item-row:hover {
+  background: var(--bg-hover);
+}
+
+.shared-media-doc-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.shared-media-doc-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.shared-media-doc-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shared-media-doc-sub {
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+/* ── Interactive Reply Preview Panel ────────────────── */
+.reply-bar-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: #17191d;
+  border-bottom: 1.5px solid var(--border);
+  animation: slideUp var(--transition-fast) forwards;
+  flex-shrink: 0;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.reply-bar-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.reply-bar-content {
+  flex: 1;
+  border-left: 2.5px solid var(--accent);
+  padding-left: 10px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reply-bar-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.reply-bar-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.reply-bar-close {
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.reply-bar-close:hover {
+  color: var(--text-primary);
+}
+
+/* Reply Block inside Message Bubble */
+.bubble-reply-preview {
+  background: rgba(0, 0, 0, 0.15);
+  border-left: 2px solid var(--accent);
+  padding: 4px 8px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.bubble-reply-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.bubble-reply-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Hover Emoji Reactions UI ──────────────────────── */
+.message-row {
+  position: relative;
+}
+
+.hover-reactions-menu {
+  position: absolute;
+  top: -28px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #1e252f;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 3px 6px;
+  border-radius: 16px;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+  animation: popScale 0.15s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes popScale {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.message-row.out .hover-reactions-menu {
+  right: 12px;
+}
+
+.message-row.in .hover-reactions-menu {
+  left: 12px;
+}
+
+.reaction-emoji-btn {
+  font-size: 15px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+  transition: transform 0.1s;
+}
+
+.reaction-emoji-btn:hover {
+  transform: scale(1.3);
+}
+
+/* Reaction pill rendered at the bottom edge of bubbles */
+.message-reactions-list {
+  position: absolute;
+  bottom: -10px;
+  display: flex;
+  gap: 3px;
+  z-index: 10;
+}
+
+.message-row.out .message-reactions-list {
+  right: 12px;
+}
+
+.message-row.in .message-reactions-list {
+  left: 12px;
+}
+
+.reaction-pill {
+  background: #17212b;
+  border: 1.5px solid var(--border);
+  font-size: 11px;
+  padding: 1.5px 5.5px;
+  border-radius: 10px;
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast);
+}
+
+.reaction-pill:hover {
+  transform: translateY(-1px);
+}
