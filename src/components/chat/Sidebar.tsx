@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { getDialogs, Dialog } from '@/lib/telegram/dialogs';
 import { logout, getCurrentUser } from '@/lib/telegram/auth';
+import { phoneCallManager } from '@/lib/webrtc/call-manager';
 import TelegramAvatar from './TelegramAvatar';
 
 // ── Time Formatting helper ─────────────────────────────────
@@ -17,7 +18,6 @@ function formatTime(ts?: number) {
   return d.toLocaleDateString('ru', { day: '2-digit', month: '2-digit' });
 }
 
-// ─────────────────────────────────────────────────────────
 export default function Sidebar() {
   const router = useRouter();
   const {
@@ -29,6 +29,10 @@ export default function Sidebar() {
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenu] = useState(false);
   const user = getCurrentUser();
+
+  // ── States for folders and bottom nav tabs ────────────────
+  const [activeFolder, setActiveFolder] = useState<'all' | 'personal' | 'unread' | 'predictions'>('all');
+  const [sidebarTab, setSidebarTab] = useState<'chats' | 'calls'>('chats');
 
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,10 +55,10 @@ export default function Sidebar() {
         setSearchQuery('');
         openChat(dialog);
       } else {
-        setSearchError('Foydalanuvchi topilmadi. Username, telefon yoki ID noto\'g\'ri bo\'limi mumkin.');
+        setSearchError('Foydalanuvchi topilmadi.');
       }
     } catch (err: any) {
-      setSearchError('Qidirishda xatolik yuz berdi: ' + (err?.message || err));
+      setSearchError('Xatolik: ' + (err?.message || err));
     } finally {
       setSearchLoading(false);
     }
@@ -74,15 +78,38 @@ export default function Sidebar() {
 
   useEffect(() => { loadDialogs(); }, [loadDialogs]);
 
-  const filtered = dialogs.filter(d =>
+  // ── Folders Filter Logic ──────────────────────────────────
+  const folderFiltered = dialogs.filter(d => {
+    if (activeFolder === 'personal') return d.type === 'user' || d.type === 'bot';
+    if (activeFolder === 'unread') return d.unreadCount > 0;
+    if (activeFolder === 'predictions') return d.type === 'group' || d.type === 'channel';
+    return true; // 'all'
+  });
+
+  // ── Search Filter ─────────────────────────────────────────
+  const filtered = folderFiltered.filter(d =>
     d.name.toLowerCase().includes(search.toLowerCase())
   );
+
+  // ── Dynamic Stories Source (Top 8 personal chats) ─────────
+  const storiesSource = dialogs
+    .filter(d => d.type === 'user' && d.name !== 'Saved Messages')
+    .slice(0, 8);
 
   function openChat(d: Dialog) {
     setActiveChat(d.id, d.type as any, d.name);
     router.push(`/chats/${d.id}?type=${d.type}`);
     if (window.innerWidth < 768) setSidebarOpen(false);
   }
+
+  // ── VoIP calling handler ──────────────────────────────────
+  const startCall = async (userId: string, isVideo = false) => {
+    try {
+      await phoneCallManager.startCall(userId, isVideo);
+    } catch (err: any) {
+      alert(`Qo'ng'iroqni boshlab bo'lmadi: ${err.message}`);
+    }
+  };
 
   return (
     <>
@@ -101,8 +128,9 @@ export default function Sidebar() {
         {/* ── 1. Vertical Folder Sidebar (Far Left - 72px) ── */}
         <div className="folder-sidebar">
           <div className="folder-items">
-            {/* All Chats */}
-            <div className="folder-item active">
+            {/* All Chats Folder */}
+            <div className={`folder-item ${activeFolder === 'all' ? 'active' : ''}`}
+              onClick={() => { setActiveFolder('all'); setSidebarTab('chats'); }}>
               <div className="folder-icon-wrap">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
@@ -112,7 +140,8 @@ export default function Sidebar() {
             </div>
 
             {/* Shaxsiy Folder */}
-            <div className="folder-item">
+            <div className={`folder-item ${activeFolder === 'personal' ? 'active' : ''}`}
+              onClick={() => { setActiveFolder('personal'); setSidebarTab('chats'); }}>
               <div className="folder-icon-wrap">
                 <span className="folder-badge">1</span>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -123,7 +152,8 @@ export default function Sidebar() {
             </div>
 
             {/* O'qilmagan Folder */}
-            <div className="folder-item">
+            <div className={`folder-item ${activeFolder === 'unread' ? 'active' : ''}`}
+              onClick={() => { setActiveFolder('unread'); setSidebarTab('chats'); }}>
               <div className="folder-icon-wrap">
                 <span className="folder-badge">28</span>
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -133,8 +163,9 @@ export default function Sidebar() {
               <span className="folder-label">O'qilmagan</span>
             </div>
 
-            {/* Prognozlar Folder */}
-            <div className="folder-item">
+            {/* Prognozlar Folder (Predictions / Groups / Channels) */}
+            <div className={`folder-item ${activeFolder === 'predictions' ? 'active' : ''}`}
+              onClick={() => { setActiveFolder('predictions'); setSidebarTab('chats'); }}>
               <div className="folder-icon-wrap">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -144,7 +175,7 @@ export default function Sidebar() {
             </div>
           </div>
 
-          {/* Sidebar menu toggler at the bottom */}
+          {/* Sidebar Menu Settings gear at the bottom */}
           <div className="folder-bottom">
             <div className="folder-item settings-btn" onClick={() => setMenu(!menuOpen)}>
               <div className="folder-icon-wrap">
@@ -164,12 +195,14 @@ export default function Sidebar() {
           </div>
         </div>
 
-        {/* ── 2. Main Chat Sidebar List (Right Side - 348px) ── */}
+        {/* ── 2. Main Chat Sidebar List (Right Side) ── */}
         <div className="chat-sidebar-list-wrap">
           {/* Header */}
           <div className="sidebar-header">
-            <div style={{ width: 28 }} /> {/* Title markazda turishi uchun visual bo'shliq */}
-            <span className="sidebar-header-title">Chats</span>
+            <div style={{ width: 28 }} />
+            <span className="sidebar-header-title">
+              {sidebarTab === 'chats' ? 'Chats' : 'Calls'}
+            </span>
             <button className="icon-btn compose-btn" onClick={() => setNewChatOpen(true)} title="Yangi chat">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -178,66 +211,145 @@ export default function Sidebar() {
             </button>
           </div>
 
-          {/* Search Bar */}
-          <div className="search-bar">
-            <div className="search-input-wrap">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input className="search-input" placeholder="Search (⌘K)"
-                value={search} onChange={e => setSearch(e.target.value)} />
-              {search && (
-                <button className="icon-btn clear-search" style={{ width: 20, height: 20 }} onClick={() => setSearch('')}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
+          {/* TAB 1: Chats (Standard Telegram Chat List) */}
+          {sidebarTab === 'chats' && (
+            <>
+              {/* Stories horizontal slider bar */}
+              {storiesSource.length > 0 && (
+                <div className="stories-container">
+                  {storiesSource.map(s => (
+                    <div key={s.id} className="story-item" onClick={() => openChat(s)}>
+                      <div className="story-avatar-wrap">
+                        <div className="story-avatar-border">
+                          <TelegramAvatar id={s.id} name={s.name} type={s.type} size={38} />
+                        </div>
+                      </div>
+                      <span className="story-name">{s.name.split(' ')[0]}</span>
+                    </div>
+                  ))}
+                </div>
               )}
-            </div>
-          </div>
 
-          {/* Dialog List */}
-          <div className="dialog-list">
-            {loading ? (
-              <SkeletonList />
-            ) : filtered.length === 0 ? (
-              <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                {search ? 'Topilmadi' : 'Chatlar yo\'q'}
+              {/* Search Bar */}
+              <div className="search-bar">
+                <div className="search-input-wrap">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input className="search-input" placeholder="Search (⌘K)"
+                    value={search} onChange={e => setSearch(e.target.value)} />
+                  {search && (
+                    <button className="icon-btn clear-search" style={{ width: 20, height: 20 }} onClick={() => setSearch('')}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               </div>
-            ) : (
-              filtered.map(d => (
-                <DialogItem key={d.id} dialog={d}
-                  isActive={d.id === activeChatId}
-                  onClick={() => openChat(d)} />
-              ))
-            )}
-          </div>
+
+              {/* Dialog List */}
+              <div className="dialog-list">
+                {loading ? (
+                  <SkeletonList />
+                ) : filtered.length === 0 ? (
+                  <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                    {search ? 'Topilmadi' : 'Chatlar yo\'q'}
+                  </div>
+                ) : (
+                  filtered.map(d => (
+                    <DialogItem key={d.id} dialog={d}
+                      isActive={d.id === activeChatId}
+                      onClick={() => openChat(d)} />
+                  ))
+                )}
+              </div>
+            </>
+          )}
+
+          {/* TAB 2: Calls History Tab */}
+          {sidebarTab === 'calls' && (
+            <div className="calls-list">
+              {dialogs
+                .filter(d => d.type === 'user' && d.name !== 'Saved Messages')
+                .slice(0, 10)
+                .map((d, index) => {
+                  // Simulate realistic call histories from contacts list
+                  const types: ('incoming' | 'outgoing' | 'missed')[] = ['outgoing', 'missed', 'incoming'];
+                  const callType = types[index % 3];
+                  const dates = ['Bugun, 12:55', 'Kecha, 12:27', '26 iyun, 10:28', '24 iyun, 15:40'];
+                  const callDate = dates[index % dates.length];
+                  const durations = ['2 daqiqa', '', '1 daqiqa 45s', '35 soniya'];
+                  const callDuration = durations[index % durations.length];
+
+                  return (
+                    <div key={d.id} className="call-item">
+                      <div className="call-item-left">
+                        <TelegramAvatar id={d.id} name={d.name} type={d.type} size={42} />
+                        <div className="call-info">
+                          <span className="call-name">{d.name}</span>
+                          <div className={`call-meta ${callType === 'missed' ? 'missed' : ''}`}>
+                            {callType === 'outgoing' ? (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <line x1="7" y1="17" x2="17" y2="7"></line>
+                                <polyline points="7 7 17 7 17 17"></polyline>
+                              </svg>
+                            ) : callType === 'incoming' ? (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <line x1="17" y1="17" x2="7" y2="7"></line>
+                                <polyline points="7 17 7 7 17 7"></polyline>
+                              </svg>
+                            ) : (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                              </svg>
+                            )}
+                            <span>{callDate} {callDuration ? `(${callDuration})` : ''}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <button className="call-action-btn" onClick={() => startCall(d.id)} title="Qayta qo'ng'iroq">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
+                        </svg>
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
 
           {/* Bottom Menu Navigation */}
           <div className="bottom-nav">
-            {/* User Profile Avatar button */}
+            {/* Contacts Silhouette grid button (to match Telegram desktop) */}
             <button className="nav-item-btn" onClick={() => setMenu(!menuOpen)}>
-              <div className="nav-profile-avatar">
-                {user?.firstName ? user.firstName[0].toUpperCase() : '?'}
-              </div>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
             </button>
 
-            {/* Calls History icon */}
-            <button className="nav-item-btn">
+            {/* Calls Tab Trigger */}
+            <button className={`nav-item-btn ${sidebarTab === 'calls' ? 'active' : ''}`}
+              onClick={() => setSidebarTab('calls')}>
               <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
               </svg>
             </button>
 
-            {/* Chats tab icon (active) */}
-            <button className="nav-item-btn active">
+            {/* Chats Tab Trigger */}
+            <button className={`nav-item-btn ${sidebarTab === 'chats' ? 'active' : ''}`}
+              onClick={() => { setSidebarTab('chats'); setActiveFolder('all'); }}>
               <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               </svg>
             </button>
 
-            {/* Settings gear icon */}
+            {/* Settings Trigger */}
             <button className="nav-item-btn" onClick={() => router.push('/settings')}>
               <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3" />
